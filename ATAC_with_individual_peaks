@@ -1,0 +1,138 @@
+set.seed(0)
+library(Signac)
+library(Seurat)
+library(EnsDb.Mmusculus.v79)
+library(ggplot2)
+library(patchwork)
+library(GenomicRanges)
+library(future)
+library(harmony)
+library(AtacAnnoR) 
+library(presto)
+
+  
+getwd() -> current_wd
+setwd("../counts/")
+
+sample_ids <- c("A1", "A2", "A4", "A6", "B7", "B8", "B9", "B11")
+atac_list <- list()
+
+for (id in sample_ids) {
+  counts <- Read10X_h5(filename = paste0("Hipp-", id, "/Hipp-", id, "/outs/filtered_peak_bc_matrix.h5"))
+  metadata <- read.csv(file = paste0("Hipp-", id, "/Hipp-", id, "/outs/singlecell.csv"), header = TRUE, row.names = 1)
+  chrom_assay <- CreateChromatinAssay(
+    counts = counts,
+    sep = c(":", "-"),
+    fragments = paste0("Hipp-", id, "/Hipp-", id, "/outs/fragments.tsv.gz"),
+    min.cells = 10
+  )
+  pbmc <- CreateSeuratObject(counts = chrom_assay, assay = "peaks", meta.data = metadata)
+  pbmc$type <- id  # Add `type` attribute
+  atac_list[[id]] <- pbmc  # Store in list with `id` as the name
+}
+
+alldata <- merge(atac_list[[1]], c(atac_list[[2]],atac_list[[3]],atac_list[[4]],atac_list[[5]],atac_list[[6]],atac_list[[7]],atac_list[[8]]), 
+                 add.cell.ids = c("A1", "A2", "A4", "A6","B7","B8","B9","B11"), project = "EPOvsPlacebo_individual_peaks")
+ 
+setwd(current_wd)
+saveRDS(alldata, file = "alldata.RDS")
+ 
+
+alldata <- readRDS("alldata.rds")
+
+# extract gene annotations from EnsDb
+annotations <- GetGRangesFromEnsDb(ensdb = EnsDb.Mmusculus.v79)
+
+# change to UCSC style since the data was mapped to hg19
+seqlevels(annotations) <- paste0('chr', seqlevels(annotations))
+genome(annotations) <- "mm10"
+
+# add the gene information to the object
+Annotation(alldata) <- annotations
+
+# compute nucleosome signal score per cell
+alldata <- NucleosomeSignal(object = alldata)
+
+# compute TSS enrichment score per cell
+alldata <- TSSEnrichment(object = alldata, fast = FALSE)
+
+# add blacklist ratio and fraction of reads in peaks, it is all 0, but for code consistency, it is included 
+alldata$pct_reads_in_peaks <- alldata$peak_region_fragments / alldata$passed_filters * 100
+alldata$blacklist_ratio <- alldata$blacklist_region_fragments / alldata$peak_region_fragments
+
+alldata <- subset(
+  x = alldata,
+  subset = nCount_peaks > 3000 &
+    nCount_peaks < 30000 &
+    pct_reads_in_peaks > 15 &
+    blacklist_ratio < 0.05 &
+    nucleosome_signal < 4 &
+    TSS.enrichment > 3
+)
+alldata
+
+alldata <- RunTFIDF(alldata)
+alldata <- FindTopFeatures(alldata, min.cutoff = 'q0')
+alldata <- RunSVD(alldata)
+
+alldata <- RunUMAP(object = alldata, reduction = 'lsi', dims = 2:8)
+alldata <- FindNeighbors(object = alldata, reduction = 'lsi', dims = 2:8)
+alldata <- FindClusters(object = alldata, verbose = FALSE, algorithm = 1)
+
+pdf(file = "Umap_test.pdf", width = 20, height = 8)
+DimPlot(object = alldata, label = TRUE) + NoLegend()
+dev.off()
+
+gene.activities <- GeneActivity(alldata)
+
+# add the gene activity matrix to the Seurat object as a new assay and normalize it
+alldata[['RNA']] <- CreateAssayObject(counts = gene.activities)
+alldata <- NormalizeData(
+  object = alldata,
+  assay = 'RNA',
+  normalization.method = 'LogNormalize',
+  scale.factor = median(alldata$nCount_RNA)
+)
+ 
+saveRDS(alldata, "alldata_new.rds")
+
+print(".")
+ 
+
+cols <- c(
+  "Oligodendrocytes" = "maroon",      
+  "Pyramidal neurons" = "darkcyan",      
+  "Interneurons" = "gold",     
+  "Intermediate cells" = "navy",    
+  "Dentate gyrus neurons" = "turquoise",   
+  "Astrocytes" = "blue",   
+  "Microglia" = "darkorange",  
+  "Endothelial cells" = "deepskyblue",     
+  "Pericytes" = "purple",    
+  "Ependymal cells" = "grey",     
+  "Neuroimmune cells" = "violet"
+)
+
+levels <- c("Oligodendrocytes", "Pyramidal neurons", "Interneurons",
+            "Intermediate cells", "Dentate gyrus neurons", "Astrocytes",
+            "Microglia", "Endothelial cells", "Pericytes", "Ependymal cells",
+            "Neuroimmune cells")
+
+alldata <- readRDS("alldata_new.rds")
+
+readRDS("../ATAC_analysis_with_combined_peaks/ATAC_with_predicted_labels.rds") -> ATAC_with_predicted_labels
+
+annotations_to_transfer <- ATAC_with_predicted_labels@meta.data
+
+# Check if the row names of ATAC match with ATAC_annotated_with_reduced_peaks
+common_identifiers <- intersect(rownames(alldata@meta.data), rownames(annotations_to_transfer))
+
+# Transfer the annotations
+alldata@meta.data[common_identifiers, "transfered_predicted.id"] <- annotations_to_transfer[common_identifiers, "predicted.id"]
+cells_to_keep <- !is.na(alldata@meta.data$transfered_predicted.id)
+alldata <- alldata[, cells_to_keep]
+
+alldata$transfered_predicted.id <- factor(alldata$transfered_predicted.id, levels = levels)
+Idents(alldata) <- "transfered_predicted.id"
+
+saveRDS(alldata, file = "ATAC_with_individual_peaks_annotated_filtered.RDS")
