@@ -1,0 +1,155 @@
+library(Signac)
+library(Seurat)
+library(JASPAR2020)
+library(TFBSTools)
+library(BSgenome.Mmusculus.UCSC.mm10)
+library(patchwork)
+
+Idents(alldata) <- "seurat_clusters"
+
+# Get a list of motif position frequency matrices from the JASPAR database
+pfm <- getMatrixSet(
+  x = JASPAR2020,
+  opts = list(collection = "CORE", tax_group = 'vertebrates', all_versions = FALSE)
+)
+
+# add motif information
+alldata <- AddMotifs(
+  object = alldata,
+  genome = BSgenome.Mmusculus.UCSC.mm10,
+  pfm = pfm
+)
+
+library(dplyr)
+
+alldata@meta.data <- alldata@meta.data %>%
+  mutate(
+    condition = case_when(
+      startsWith(type, "A") ~ "EPO",
+      startsWith(type, "B") ~ "Placebo",
+      TRUE ~ NA_character_
+    )
+  )
+
+
+alldata@meta.data$seuratcluster_condition <- paste0(alldata@meta.data$seurat_clusters, "_", alldata@meta.data$condition)
+Idents(alldata) <- "seuratcluster_condition"
+
+
+clusters <- unique(alldata$seurat_clusters)
+da_peaks_per_cluster <- list()
+
+set.seed(0)
+for (clust in clusters) {
+  epo_group <- paste0(clust, "_EPO")
+  placebo_group <- paste0(clust, "_Placebo")
+  
+  # Check if both groups exist
+  if (all(c(epo_group, placebo_group) %in% Idents(alldata))) {
+    # Check group sizes
+    n_epo <- sum(Idents(alldata) == epo_group)
+    n_placebo <- sum(Idents(alldata) == placebo_group)
+    
+    if (n_epo >= 3 && n_placebo >= 3) {
+      message("Running DA for cluster: ", clust)
+      
+      da_peaks <- FindMarkers(
+        object = alldata,
+        ident.1 = epo_group,
+        ident.2 = placebo_group,
+        only.pos = TRUE,
+        min.pct = 0.1,
+        test.use = "LR",
+        latent.vars = "nCount_peaks"
+      )
+      
+      da_peaks_per_cluster[[paste0("Cluster_", clust)]] <- da_peaks
+    } else {
+      message("Skipping cluster ", clust, ": not enough cells in one of the groups (EPO = ", n_epo, ", Placebo = ", n_placebo, ")")
+    }
+  }
+}
+
+motif_results <- list()
+
+for (clust_name in names(da_peaks_per_cluster)) {
+  da_table <- da_peaks_per_cluster[[clust_name]]
+  
+  # Step 1: Get significant peaks
+  sig_peaks <- rownames(da_table[da_table$p_val_adj < 0.05, ])
+  
+  # Step 2: Keep only reference peaks (start with "chr")
+  sig_peaks <- sig_peaks[grepl("^chr", sig_peaks)]
+  
+  # Step 3: Proceed if enough peaks remain
+  if (length(sig_peaks) > 10) {
+    message("Running motif enrichment for ", clust_name)
+    
+    motif_enrichment <- FindMotifs(
+      object = alldata,
+      features = sig_peaks
+    )
+    
+    motif_results[[clust_name]] <- motif_enrichment
+  } else {
+    message("Skipping ", clust_name, " (too few reference peaks)")
+  }
+}
+
+saveRDS(da_peaks_per_cluster, file = "DA_peaks_per_cluster.rds")
+saveRDS(motif_results, file = "Motif_enrichment_per_cluster.rds")
+ 
+library(dplyr)
+
+library(Signac)
+library(GenomicRanges)
+library(dplyr)
+
+# Function to convert peak names like "chr1-12345-12456" to GRanges
+peak_string_to_granges <- function(peak_names) {
+  coords <- do.call(rbind, strsplit(peak_names, "-"))
+  gr <- GRanges(
+    seqnames = coords[, 1],
+    ranges = IRanges(as.integer(coords[, 2]), as.integer(coords[, 3]))
+  )
+  names(gr) <- peak_names
+  return(gr)
+}
+
+# ==== Add closest gene to each cluster's DA peaks ====
+da_peaks_annotated_list <- lapply(names(da_peaks_per_cluster), function(clust_name) {
+  da_df <- da_peaks_per_cluster[[clust_name]]
+  da_df$peak <- rownames(da_df)
+  
+  # Convert peaks to GRanges
+  gr <- peak_string_to_granges(da_df$peak)
+  
+  # Get closest gene
+  closest_genes <- ClosestFeature(alldata, regions = gr)
+  
+  # Merge gene info into DA table
+  da_df_annotated <- left_join(da_df, closest_genes, by = c("peak" = "query_region"))
+  da_df_annotated$Cluster <- clust_name
+  return(da_df_annotated)
+})
+
+# ==== Combine all annotated DA peaks ====
+da_peaks_combined <- bind_rows(da_peaks_annotated_list, .id = "RowID")
+
+# ==== Save to CSV ====
+write.csv(da_peaks_combined, "All_DA_peaks_with_closest_genes.csv", row.names = FALSE)
+
+# ==== Combine motif enrichment results ====
+motif_combined <- bind_rows(
+  lapply(names(motif_results), function(clust_name) {
+    df <- motif_results[[clust_name]]
+    df$Cluster <- clust_name
+    df
+  }),
+  .id = "RowID"
+)
+
+# Save to CSV
+write.csv(motif_combined, "All_motif_enrichment_combined.csv", row.names = FALSE)
+ 
+ 
