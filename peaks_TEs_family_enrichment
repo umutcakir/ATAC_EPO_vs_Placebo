@@ -1,0 +1,91 @@
+library(Signac)
+library(regioneR)
+library(GenomicRanges)
+
+readRDS("ATAC_with_individual_peaks_annotated_filtered_motifs_added.RDS") -> alldata
+
+granges(alldata[["peaks"]]) -> all_peaks 
+
+summits <- GRanges(
+  seqnames = seqnames(all_peaks),
+  ranges = IRanges(
+    start = start(all_peaks) + floor(width(all_peaks) / 2),
+    width = 1
+  )
+)
+
+# Keep only chromosomes starting with "chr"
+summits <- summits[grepl("^chr", seqnames(summits))]
+
+
+# 1. Load the RepeatMasker TSV file
+te_df <- read.delim("mm10_RepeatMasker/mm10_RepeatMasker.tsv", comment.char = "", stringsAsFactors = FALSE)
+# Remove Simple_repeat and Low_complexity
+te_df <- te_df[!(te_df$repClass %in% c("Simple_repeat", "Low_complexity")), ]
+
+# 2. Check column names (adjust if needed)
+# Typical RepeatMasker format: genoName, genoStart, genoEnd, strand, repName, repClass, repFamily
+# Use head(te_df) to inspect if unsure
+head(te_df)
+
+# 3. Convert to GRanges
+all_TEs_GR <- GRanges(
+  seqnames = te_df$genoName,
+  ranges = IRanges(start = te_df$genoStart + 1, end = te_df$genoEnd),  # BED is 0-based
+  strand = te_df$strand
+)
+mcols(all_TEs_GR)$TE_family <- te_df$repName
+
+# 4. Extract list of unique TE families
+TE_families <- unique(te_df$repName)
+TE_family_df <- data.frame(TE_family = TE_families, Pvalue = NA)
+
+# 5. Use your real peaks as fixed B
+All_Peaks_GR <- summits  # Already a GRanges object
+
+# 6. Filter for shared chromosomes
+shared_chroms <- intersect(seqlevelsInUse(all_TEs_GR), seqlevelsInUse(All_Peaks_GR))
+all_TEs_GR <- keepSeqlevels(all_TEs_GR, shared_chroms, pruning.mode = "coarse")
+All_Peaks_GR <- keepSeqlevels(All_Peaks_GR, shared_chroms, pruning.mode = "coarse")
+
+# 7. Initialize storage
+Save_Model_Also <- list()
+
+# 8. Run permTest per TE family
+set.seed(0)
+for (i in seq_along(TE_families)) {
+  fam <- TE_families[i]
+  cat("Testing TE family:", fam, "(", i, "/", length(TE_families), ")\n")
+  
+  fam_gr <- all_TEs_GR[all_TEs_GR$TE_family == fam]
+  
+  if (length(fam_gr) < 10) next  # skip underpowered tests
+  
+  numOverlaps(fam_gr, All_Peaks_GR)
+  
+  pt <- permTest(
+    A = fam_gr,                         # This TE family (randomized)
+    B = All_Peaks_GR,                   # Real peaks (fixed)
+    ntimes = 1000,
+    randomize.function = resampleRegions,
+    universe = all_TEs_GR,              # Resample from all TEs
+    evaluate.function = numOverlaps,
+    verbose = FALSE,
+    alternative = "greater"
+  )
+  
+  TE_family_df_idx <- which(TE_family_df$TE_family == fam)
+  TE_family_df$Pvalue[TE_family_df_idx] <- pt$numOverlaps$pval
+  TE_family_df$Zscore[TE_family_df_idx] <- pt$numOverlaps$zscore
+  # Save_Model_Also[[fam]] <- pt
+}
+
+# 9. Multiple testing correction
+TE_family_df$FDR <- p.adjust(TE_family_df$Pvalue, method = "fdr")
+
+# 10. Save results
+saveRDS(TE_family_df, file = "Mouse_TE_family_enrichment.rds")
+# saveRDS(Save_Model_Also, file = "Mouse_TE_perm_models.rds")
+write.table(TE_family_df, file = "Mouse_TE_family_enrichment.txt", sep = "\t", quote = FALSE, row.names = FALSE)
+
+
