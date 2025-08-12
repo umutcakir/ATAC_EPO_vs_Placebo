@@ -5,16 +5,17 @@ library(Seurat)
 library(JASPAR2020)
 library(BSgenome.Mmusculus.UCSC.mm10)
 library(patchwork)
+library(future)
+library(future.apply)
+library(progressr)
 
 Idents(alldata) <- "seurat_clusters"
+
+# Here, we showed DA peak for seurat clusters, but we also applied DA peak analysis for 11 main cell types and pyramidal lineages. 
 
 print("Motifs are added") 
 
 clusters <- unique(Idents(alldata))
-
-library(future)
-library(future.apply)
-library(progressr)
 
 # Set up parallel backend (adjust workers as needed)
 plan("multisession", workers = 10)
@@ -31,7 +32,7 @@ with_progress({
       object = alldata,
       ident.1 = clust,
       only.pos = TRUE,
-      min.pct = 0.1,
+      min.pct = 0.01,
       test.use = "LR",
       latent.vars = "nCount_peaks"
     )
@@ -57,8 +58,6 @@ combined_da_peaks <- do.call(rbind, da_peaks_list)
 write.csv(combined_da_peaks, "da_peaks_all_clusters_without_treatment_separation.csv", row.names = TRUE)
 
 saveRDS(da_peaks_by_cluster, file = "DA_peaks_by_cluster_without_treatment_separation.rds")
-
-
 
 motif_results_by_cluster <- list()
 
