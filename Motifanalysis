@@ -35,6 +35,7 @@ alldata@meta.data <- alldata@meta.data %>%
 alldata@meta.data$seuratcluster_condition <- paste0(alldata@meta.data$seurat_clusters, "_", alldata@meta.data$condition)
 Idents(alldata) <- "seuratcluster_condition"
 
+# Here, we shows the code for seurat cluster. We performed motif analysis also for 11 main cell types and pyramidal lineages.
 
 clusters <- unique(alldata$seurat_clusters)
 da_peaks_per_cluster <- list()
@@ -58,7 +59,7 @@ for (clust in clusters) {
         ident.1 = epo_group,
         ident.2 = placebo_group,
         only.pos = TRUE,
-        min.pct = 0.1,
+        min.pct = 0.01,
         test.use = "LR",
         latent.vars = "nCount_peaks"
       )
