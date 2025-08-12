@@ -1,0 +1,269 @@
+set.seed(0)
+library(Pando)
+library(openxlsx)
+library(ComplexHeatmap)
+library(circlize)
+library(dplyr)
+
+# By condition (EPO vs Placebo)
+
+grn_files <- list.files(
+  "RDS_objects",
+  pattern   = "\\.rds$",
+  full.names = TRUE,
+  recursive  = TRUE
+)
+  
+grn_list <- setNames(
+  lapply(grn_files, readRDS),
+  sub("\\.rds$", "", basename(grn_files))   # ← removes ".rds"
+)
+
+print(names(grn_list))
+#> [1] "Microglia" "Astrocyte" "OPC" "Oligo" ...
+ 
+wb <- createWorkbook()
+for (celltype in names(grn_list)) {
+  df <- NetworkModules(grn_list[[celltype]])@meta
+  
+  # 1) Sanitize the entire celltype name:
+  safe_name <- gsub("[^A-Za-z0-9]", "_", celltype)
+  
+  # 2) If >31 chars, keep only the last 31:
+  if (nchar(safe_name) > 31) {
+    safe_name <- substr(
+      safe_name,
+      nchar(safe_name) - 30,  # start at (length − 30)
+      nchar(safe_name)         # end at full length
+    )
+  }
+  
+  addWorksheet(wb, safe_name)
+  writeData(wb, safe_name, df)
+}
+
+saveWorkbook(wb, file = "GRN_by_celltype_condition.xlsx", overwrite = TRUE)
+
+combined_df <- bind_rows(
+  lapply(seq_along(grn_list), function(i) {
+    obj <- grn_list[[i]]
+    
+    NetworkModules(obj)@meta %>%                       # module metadata
+      mutate(
+        celltype    = names(grn_list)[i],              # came from this sheet
+      )
+  })
+)
+
+write.csv(
+  combined_df,
+  file = "GRN_modules_all_celltypes_condition.csv",
+  row.names = FALSE,
+  quote     = FALSE      # keeps file clean, easy to read
+)
+
+cat("Rows written: ", nrow(combined_df), "\n",
+    "Columns:      ", paste(colnames(combined_df), collapse = ", "), "\n")
+
+
+all_tfs <- unique(unlist(lapply(grn_list, function(obj) {
+  unique(NetworkModules(obj)@meta$tf)
+})))
+
+activity_matrix <- sapply(grn_list, function(obj) {
+  as.integer(all_tfs %in% unique(NetworkModules(obj)@meta$tf))
+})
+rownames(activity_matrix) <- all_tfs
+
+saveRDS(activity_matrix, file = "activity_matrix.RDS")
+
+Heatmap(
+  activity_matrix,
+  col = c("0" = "white", "1" = "black"),
+  cluster_rows = FALSE,
+  cluster_columns = FALSE,
+  show_row_names = TRUE,
+  show_column_names = TRUE,
+  heatmap_legend_param = list(title = "Regulon",
+                              at     = c(0, 1),
+                              labels = c("OFF", "ON")),
+  column_title = "Cell Types",
+  row_title = "TF Regulons"
+)
+
+library(ComplexHeatmap)
+library(grid)          # for gpar()
+
+## ── Choose a readable font size and auto-scale the page height ──────────────
+n_rows      <- nrow(activity_matrix)   # keep ALL regulons
+row_pt      <- 6                       # ≈ 6-pt labels are readable on zoom
+row_in      <- row_pt / 72             # points → inches (1 pt = 1/72 in)
+page_height <- max(11, n_rows * row_in)  # at least 11 in tall
+
+pdf(
+  file   = "Regulon_heatmap_full.pdf",
+  width  = 12,                # fixed width
+  height = page_height,       # scales with number of rows
+  onefile = TRUE
+)
+
+Heatmap(
+  activity_matrix,
+  col = c("0" = "white", "1" = "black"),
+  cluster_rows    = FALSE,
+  cluster_columns = FALSE,
+  show_row_names  = TRUE,
+  row_names_gp    = gpar(fontsize = row_pt),  # consistent text size
+  show_column_names = TRUE,
+  heatmap_legend_param = list(
+    title  = "Regulon",
+    at     = c(0, 1),
+    labels = c("OFF", "ON")
+  ),
+  column_title = "Cell Types",
+  row_title    = "TF Regulons"
+)
+
+dev.off()   # closes the device → writes the PDF
+
+activity_df <- cbind(TF = rownames(activity_matrix), as.data.frame(activity_matrix))
+write.csv(activity_df,
+          file = "Regulon_presence_by_celltype_condition.csv",
+          row.names = FALSE,    # row names now live in the first column "TF"
+          quote     = FALSE)    # keeps the file clean and easy to read
+ 
+
+
+# Now, by Cell type:
+
+set.seed(0)
+library(Pando)
+library(openxlsx)
+library(ComplexHeatmap)
+library(circlize)
+library(dplyr)
+
+grn_files <- list.files(
+  "RDS_objects",
+  pattern   = "\\.rds$",
+  full.names = TRUE,
+  recursive  = TRUE
+)
+  
+grn_list <- setNames(
+  lapply(grn_files, readRDS),
+  sub("\\.rds$", "", basename(grn_files))   # ← removes ".rds"
+)
+
+print(names(grn_list))
+#> [1] "Microglia" "Astrocyte" "OPC" "Oligo" ...
+
+wb <- createWorkbook()
+for (celltype in names(grn_list)) {
+  df <- NetworkModules(grn_list[[celltype]])@meta
+  
+  # 1) Sanitize the entire celltype name:
+  safe_name <- gsub("[^A-Za-z0-9]", "_", celltype)
+  
+  # 2) If >31 chars, keep only the last 31:
+  if (nchar(safe_name) > 31) {
+    safe_name <- substr(
+      safe_name,
+      nchar(safe_name) - 30,  # start at (length − 30)
+      nchar(safe_name)         # end at full length
+    )
+  }
+  
+  addWorksheet(wb, safe_name)
+  writeData(wb, safe_name, df)
+}
+saveWorkbook(wb, file = "GRN_by_celltype.xlsx", overwrite = TRUE)
+
+combined_df <- bind_rows(
+  lapply(seq_along(grn_list), function(i) {
+    obj <- grn_list[[i]]
+    
+    NetworkModules(obj)@meta %>%                       # module metadata
+      mutate(
+        celltype    = names(grn_list)[i],              # came from this sheet
+      )
+  })
+)
+
+write.csv(
+  combined_df,
+  file = "GRN_modules_all_celltypes.csv",
+  row.names = FALSE,
+  quote     = FALSE      # keeps file clean, easy to read
+)
+
+cat("Rows written: ", nrow(combined_df), "\n",
+    "Columns:      ", paste(colnames(combined_df), collapse = ", "), "\n")
+
+
+all_tfs <- unique(unlist(lapply(grn_list, function(obj) {
+  unique(NetworkModules(obj)@meta$tf)
+})))
+
+activity_matrix <- sapply(grn_list, function(obj) {
+  as.integer(all_tfs %in% unique(NetworkModules(obj)@meta$tf))
+})
+rownames(activity_matrix) <- all_tfs
+
+saveRDS(activity_matrix, file = "activity_matrix.RDS")
+
+Heatmap(
+  activity_matrix,
+  col = c("0" = "white", "1" = "black"),
+  cluster_rows = FALSE,
+  cluster_columns = FALSE,
+  show_row_names = TRUE,
+  show_column_names = TRUE,
+  heatmap_legend_param = list(title = "Regulon",
+                              at     = c(0, 1),
+                              labels = c("OFF", "ON")),
+  column_title = "Cell Types",
+  row_title = "TF Regulons"
+)
+
+library(ComplexHeatmap)
+library(grid)          # for gpar()
+
+n_rows      <- nrow(activity_matrix)   # keep ALL regulons
+row_pt      <- 6                       # ≈ 6-pt labels are readable on zoom
+row_in      <- row_pt / 72             # points → inches (1 pt = 1/72 in)
+page_height <- max(11, n_rows * row_in)  # at least 11 in tall
+
+pdf(
+  file   = "Regulon_heatmap_full.pdf",
+  width  = 12,                # fixed width
+  height = page_height,       # scales with number of rows
+  onefile = TRUE
+)
+
+Heatmap(
+  activity_matrix,
+  col = c("0" = "white", "1" = "black"),
+  cluster_rows    = FALSE,
+  cluster_columns = FALSE,
+  show_row_names  = TRUE,
+  row_names_gp    = gpar(fontsize = row_pt),  # consistent text size
+  show_column_names = TRUE,
+  heatmap_legend_param = list(
+    title  = "Regulon",
+    at     = c(0, 1),
+    labels = c("OFF", "ON")
+  ),
+  column_title = "Cell Types",
+  row_title    = "TF Regulons"
+)
+
+dev.off()   # closes the device → writes the PDF
+
+activity_df <- cbind(TF = rownames(activity_matrix), as.data.frame(activity_matrix))
+write.csv(activity_df,
+          file = "Regulon_presence_by_celltype.csv",
+          row.names = FALSE,    # row names now live in the first column "TF"
+          quote     = FALSE)    # keeps the file clean and easy to read
+
+  
