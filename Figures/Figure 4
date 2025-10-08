@@ -1,0 +1,3386 @@
+library(Seurat)
+library(Signac)
+library(ggplot2)
+library(scplotter)
+library(tidyr)
+set.seed(0)
+
+ident_order <- c("A1", "A2", "A4", "A6", "B7", "B8", "B9", "B11")
+
+# General function to save ggplot objects in high resolution
+save_highres_plot <- function(plot, filename, width = 12, height = 10, dpi = 1200, format = "png") {
+  # Determine file extension
+  ext <- tolower(format)
+  
+  # Ensure filename ends with the correct extension
+  if (!grepl(paste0("\\.", ext, "$"), filename)) {
+    filename <- paste0(filename, ".", ext)
+  }
+  
+  # Choose appropriate device based on format
+  ggsave(
+    filename = filename,
+    plot = plot,
+    device = ext,
+    width = width,
+    height = height,
+    dpi = dpi,
+    units = "in",
+    bg = "white"  # white background avoids transparency issues
+  )
+}
+
+palette_umap <- c(
+  "Oligodendrocytes" = "maroon",      
+  "Pyramidal neurons" = "darkcyan",      
+  "Interneurons" = "gold",     
+  "Intermediate cells" = "navy",    
+  "Dentate gyrus neurons" = "turquoise",   
+  "Astrocytes" = "blue",   
+  "Microglia" = "darkorange",  
+  "Endothelial cells" = "deepskyblue",     
+  "Pericytes" = "purple",    
+  "Ependymal cells" = "grey",     
+  "Neuroimmune cells" = "violet"
+)
+
+
+
+# 1B-1C Start
+ATAC <- readRDS("../ATAC_analysis_with_combined_peaks/ATAC_with_sharedUMAP_and_imputedRNA.rds")
+# Create the UMAP cluster plot with labels
+p <- CellDimPlot(
+  ATAC,
+  group_by = "seurat_clusters",
+  reduction = "umap",
+  theme = "theme_blank",
+  label = TRUE,
+  label_insitu = TRUE,
+  label_repel = TRUE
+)
+
+# Save the plot using your general function
+save_highres_plot(p, "Figure1/Figure1B_seurat_clusters", format = "png")
+
+# Tabulate and sort predicted.id counts
+cell_order <- names(sort(table(ATAC@meta.data$predicted.id), decreasing = TRUE))
+
+# Reassign predicted.id as a factor with the new order
+ATAC@meta.data$predicted.id <- factor(ATAC@meta.data$predicted.id, levels = cell_order)
+
+p <- CellDimPlot(
+  ATAC,
+  group_by = "predicted.id",
+  reduction = "umap",
+  theme = "theme_blank",
+  palcolor = palette_umap,
+  label = TRUE,
+  label_insitu = TRUE,
+  label_repel = TRUE
+)
+
+# Save the plot using your general function
+save_highres_plot(p, "Figure1/Figure1C_11_clusters", format = "png")
+# 1B-C Complete 
+
+#S1C Start
+ATAC <- readRDS("../ATAC_analysis_with_combined_peaks/ATAC_with_sharedUMAP_and_imputedRNA.rds")
+library(ggplot2)
+library(patchwork)
+ATAC@meta.data$orig.ident <- factor(
+  ATAC@meta.data$orig.ident,
+  levels = ident_order
+)
+
+# Panel A: TSS Enrichment Distribution by Sample
+p1 <- ggplot(ATAC@meta.data, aes(x = TSS.enrichment, fill = orig.ident)) +
+  geom_density(alpha = 0.6) +
+  #geom_vline(xintercept = 2, linetype = "dashed", color = "red") +
+  theme_classic() +
+  labs(title = "TSS Enrichment by Sample", x = "TSS Enrichment", y = "Density") +
+  theme(legend.position = "top")
+
+# Panel B: Nucleosome Signal Distribution by Sample
+p2 <- ggplot(ATAC@meta.data, aes(x = nucleosome_signal, fill = orig.ident)) +
+  geom_density(alpha = 0.6) +
+  #geom_vline(xintercept = 4, linetype = "dashed", color = "red") +
+  theme_classic() +
+  labs(title = "Nucleosome Signal by Sample", x = "Nucleosome Signal", y = "Density") +
+  theme(legend.position = "top")
+
+# Panel C: ENCODE Blacklist Fraction by Sample
+p3 <- ggplot(ATAC@meta.data, aes(x = blacklist_ratio, fill = orig.ident)) +
+  geom_density(alpha = 0.6) +
+  #geom_vline(xintercept = 0.05, linetype = "dashed", color = "red") +
+  theme_classic() +
+  labs(title = "ENCODE Blacklist Fraction by Sample", x = "Blacklist Ratio", y = "Density") +
+  theme(legend.position = "top")
+
+# Combine the three panels
+figure_S1C <- p1 / p2 / p3 + plot_annotation(tag_levels = "A")
+
+# Show the figure
+figure_S1C
+save_highres_plot(figure_S1C, "Figure1/FigureS1C_TSS_Enrichment_Nucleosome_Signal_Blacklist_Fraction")
+#S1C Complete 
+
+
+# 1D Start
+# Set peaks as the default assay if not already
+DefaultAssay(ATAC) <- "peaks"
+Idents(ATAC) <- "predicted.id"  # Use predicted identities for grouping
+
+# Marker loci for each cell type
+marker_genes <- c(
+  "Slc1a2",      # Astrocytes
+  "Prox1",       # Dentate gyrus neurons
+  "Slc17a7",     # Neuronal marker (vGlut2)
+  "Plp1",        # Oligodendrocytes
+  "Mbp",         # Oligodendrocytes
+  "Mog",         # Oligodendrocytes
+  "Pdgfra"       # OPCs / Oligodendrocyte-lineage
+)
+
+# Plot and arrange in 2 columns
+p <- CoveragePlot(
+  object = ATAC,
+  region = marker_genes,
+  annotation = TRUE,
+  group.by = "predicted.id",
+  extend.upstream = 2000,
+  extend.downstream = 2000,
+  ncol = 2
+)
+
+# Save the figure
+save_highres_plot(p, "Figure1/Figure1D_MarkerLoci_ChromatinAccessibility", width = 12, height = 10, dpi = 600, format = "png")
+# 1D Complete
+
+# 1E Start
+anchors <- readRDS("../ATAC_analysis_with_combined_peaks/anchors_from_FindIntegrationAnchors.RDS")
+# Integrate data
+integrated <- IntegrateData(anchorset = anchors)
+# Dimensionality reduction on integrated data
+DefaultAssay(integrated) <- "integrated"
+integrated <- ScaleData(integrated)
+integrated <- RunPCA(integrated)
+integrated <- RunUMAP(integrated, dims = 1:30)
+# Plot co-embedding
+DimPlot(integrated, group.by = "dataset_source", raster = FALSE)
+
+# Generate UMAP plot
+p <- DimPlot(integrated, group.by = "dataset_source", raster = FALSE) +
+  scale_color_manual(
+    values = c("ATAC_source" = "#F8766D", "RNA_source" = "#00BFC4"),
+    labels = c("ATAC_source" = "ATAC", "RNA_source" = "RNA")
+  ) +
+  labs(color = NULL)  # Optional: remove legend title
+
+# Save with your general function
+save_highres_plot(p, "Figure1/Figure1E_Coembedding_UMAP", format = "png")
+# 1E Complete
+
+# S1A Start
+# Available as Table 
+# S1A Complete
+
+# S1B Start
+# Generate violin plot of QC metrics
+p <- VlnPlot(
+  object = ATAC,
+  features = c(
+    'nCount_peaks',
+    'pct_reads_in_peaks'
+  ),
+  pt.size = 0.0,
+  ncol = 2,
+  group.by = "orig.ident"
+)
+
+# Save the figure
+save_highres_plot(p, "Figure1/FigureS1B_QCmetrics_bySample", format = "png")
+# S1B Complete
+
+# S2 Start
+# (Sankey Plot)
+RNA <- readRDS("../ATAC_analysis_with_combined_peaks/RNA_final_(without_A3_A5_B10_B12).RDS")
+DefaultAssay(ATAC) <- "ACTIVITY"
+Idents(ATAC) <- "predicted.id"
+FindAllMarkers(RNA, min.pct = 0.01 ) -> RNA_markers
+FindAllMarkers(ATAC, min.pct = 0.01) -> ATAC_markers 
+
+# Step 1: Filter by adjusted p-value
+RNA_filt <- RNA_markers %>%
+  filter(p_val_adj < 0.01)
+
+ATAC_filt <- ATAC_markers %>%
+  filter(p_val_adj < 0.01)
+
+# Step 2: Keep genes that are markers for only one cell type
+RNA_unique <- RNA_filt %>%
+  group_by(gene) %>%
+  filter(n_distinct(cluster) == 1)
+
+ATAC_unique <- ATAC_filt %>%
+  group_by(gene) %>%
+  filter(n_distinct(cluster) == 1)
+
+# Step 3: Join on shared genes
+shared_genes <- intersect(RNA_unique$gene, ATAC_unique$gene)
+
+RNA_final <- RNA_unique %>%
+  filter(gene %in% shared_genes) %>%
+  select(gene, RNA_cluster = cluster)
+
+ATAC_final <- ATAC_unique %>%
+  filter(gene %in% shared_genes) %>%
+  select(gene, ATAC_cluster = cluster)
+
+# Step 4: Merge for Sankey input
+sankey_df <- left_join(RNA_final, ATAC_final, by = "gene")
+
+# --- Set factor levels and color palette ---
+sankey_df$RNA_cluster <- factor(sankey_df$RNA_cluster, levels = cell_order)
+sankey_df$ATAC_cluster <- factor(sankey_df$ATAC_cluster, levels = cell_order)
+
+n_left <- length(unique(sankey_df$ATAC_cluster))
+n_right <- length(unique(sankey_df$RNA_cluster))
+
+library(ggalluvial)
+p <- ggplot(sankey_df, aes(axis1 = ATAC_cluster, axis2 = RNA_cluster, y = 1)) + 
+  geom_alluvium(aes(fill = ATAC_cluster), width = 1/12) +
+  geom_stratum(width = 1/12, fill = "gray95", color = "black") +
+  geom_text(
+    stat = "stratum",
+    aes(label = after_stat(stratum)),
+    size = 3.0,
+    hjust = c(rep(1, n_left), rep(0, n_right)),
+    nudge_x = c(rep(-0.05, n_left), rep(0.05, n_right))  # Increase spacing for visibility
+  ) +
+  scale_x_discrete(limits = c("ATAC markers", "RNA markers"), expand = c(.1, .1)) +
+  scale_fill_manual(values = palette_umap, drop = FALSE) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Shared Cell-Type-Specific Markers Between ATAC and RNA",
+    y = "Marker Gene (Adjusted pval < 0.01)",
+    x = NULL,
+    fill = "ATAC Identity"
+  ) +
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid = element_blank(),
+    plot.margin = margin(t = 10, r = 10, b = 10, l = 60)  # ← increase left margin
+  )
+
+
+# Create the contingency table of ATAC vs RNA cell type marker overlap
+contingency <- table(sankey_df$ATAC_cluster, sankey_df$RNA_cluster)
+
+# Check dimensions
+print(dim(contingency))
+
+set.seed(123)
+# Fisher's exact test
+fisher_result <- fisher.test(contingency, simulate.p.value = TRUE)
+
+# Print full result
+print(fisher_result)
+
+# Extract just the p-value
+cat("Fisher's Exact Test p-value:", fisher_result$p.value, "\n")
+
+save_highres_plot(p, "Figure1/FigureS2_Sankey_RNA_ATAC_SharedMarkers", format = "png", width = 18)
+ 
+# S2 Complete
+
+# S3/2A Start
+
+# Load motif enrichment data
+motifs <- read.csv("Data/WithoutTreatment_Separation/motif_enrichment_all_clusters_without_treatment_separation.csv")
+
+# Step 1: Identify motifs that pass the threshold in at least one cluster
+motif_to_keep <- motifs %>%
+  filter(fold.enrichment > 1.5, p.adjust < 1e-200) %>%
+  pull(motif.name) %>%
+  unique()
+
+# Step 2: Keep ALL clusters for those motifs
+motifs_filt <- motifs %>%
+  filter(motif.name %in% motif_to_keep) %>%
+  mutate(neg_log10_padj = -log10(p.adjust))
+
+# Step 3: Prepare matrix: motif.name × cluster
+motif_matrix <- motifs_filt %>%
+  select(motif.name, cluster, neg_log10_padj) %>%
+  pivot_wider(names_from = cluster, values_from = neg_log10_padj, values_fill = 0)
+
+# Step 4: Convert to matrix and fix rownames
+mat <- as.data.frame(motif_matrix)
+rownames(mat) <- mat$motif.name
+mat <- mat[, setdiff(colnames(mat), "motif.name")]
+
+# Step 5: Cap high values for visual scaling
+mat <- pmin(mat, 300)
+
+# Step 6: Set legend scale starting from 10
+breaks <- seq(10, 300, length.out = 100)
+
+# Step 7: Plot
+p <- pheatmap(
+  mat,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  color = colorRampPalette(c("white", "darkred"))(99),
+  breaks = breaks,
+  main = expression("-log"[10]~"(adjusted p-value), filtered by fold.enrichment > 1.5 & p.adj < 1e-200"),
+  fontsize_row = 8,
+  fontsize_col = 10,
+  legend = TRUE,
+  legend_labels = NULL,
+  legend_breaks = NULL
+)
+
+# Step 8: Save high-resolution heatmap
+save_highres_plot(p, "Figure1/Figure_2AS3_MotifEnrichment_Heatmap.png", format = "png", width = 20, height = 20)
+# S3/2A Complete
+
+ 
+# 2B Start 
+ATAC <- readRDS("../ATAC_analysis_with_individual_peaks/ATAC_with_individual_peaks_annotated_filtered_motifs_added.RDS")
+DefaultAssay(ATAC) <- "peaks"
+da_peaks_by_cluster <- readRDS("Data/WithoutTreatment_Separation/DA_peaks_by_cluster_without_treatment_separation_for_11levels.rds")
+motif_results_by_cluster <- list()
+
+for (clust_name in names(da_peaks_by_cluster)) {
+  da_table <- da_peaks_by_cluster[[clust_name]]
+   
+  sig_peaks <- rownames(da_table[da_table$p_val_adj < 1e-50, ])
+  sig_peaks <- sig_peaks[grepl("^chr", sig_peaks)]  # keep only reference
+  
+  if (length(sig_peaks) > 3) {
+    message("Running motif enrichment for ", clust_name)
+    
+    motif_enrichment <- FindMotifs(
+      object = ATAC,
+      features = sig_peaks
+    )
+    
+    motif_results_by_cluster[[clust_name]] <- motif_enrichment
+  } else {
+    message("Skipping ", clust_name, " (too few peaks)")
+  }
+}
+
+library(dplyr)
+
+combined_motifs <- bind_rows(
+  lapply(names(motif_results_by_cluster), function(clust) {
+    df <- motif_results_by_cluster[[clust]]
+    df$cluster <- clust  # add cluster column
+    return(df)
+  })
+)
+
+write.csv(combined_motifs, "Data/WithoutTreatment_Separation/motif_enrichment_combined_by_cluster.csv", row.names = FALSE)
+
+
+
+# Step 1: Identify motifs that are significant in at least one cluster
+motif_to_keep <- combined_motifs %>%
+  filter(fold.enrichment > 0, pvalue < 1) %>%  # pvalue < 1 to exclude missing/invalid entries
+  pull(motif.name) %>%
+  unique()
+
+# Step 2: Keep all clusters for those motifs
+combined_motifs_filtered <- combined_motifs %>%
+  filter(motif.name %in% motif_to_keep) %>%
+  mutate(neg_log10_pval = -log10(pvalue))
+
+# Step 3: Pivot to wide matrix
+motif_matrix <- combined_motifs_filtered %>%
+  select(motif.name, cluster, neg_log10_pval) %>%
+  pivot_wider(names_from = cluster, values_from = neg_log10_pval, values_fill = 0)
+
+# Step 4: Prepare matrix with correct rownames
+mat <- as.data.frame(motif_matrix)
+rownames(mat) <- mat$motif.name
+mat <- mat[, setdiff(colnames(mat), "motif.name")]
+
+# Step 5: Cap extreme values
+mat <- pmin(mat, 300)
+
+# Step 6: Set color scale breaks
+breaks <- seq(10, 300, length.out = 100)
+
+# Step 7: Replace any NA with 0
+mat[is.na(mat)] <- 0
+
+colnames(mat) <- gsub("Cluster_", "", colnames(mat))
+
+library(pheatmap)
+# Step 8: Generate heatmap without row labels
+p <- pheatmap(
+  mat,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  color = colorRampPalette(c("white", "darkred"))(99),
+  breaks = breaks,
+  main = expression("-log"[10]~"(p-value), enriched motifs per cluster"),
+  fontsize_row = 8,
+  fontsize_col = 10,
+  border_color = NA,
+  labels_row = NA
+)
+
+# Step 9: Save high-resolution image
+save_highres_plot(p, "Figure1/Figure_Go_to_Supplementary_2B_MotifEnrichment_Heatmap.png", format = "png")
+
+
+# Step 1: Find motifs that pass threshold in at least one cluster
+motif_to_keep <- combined_motifs %>%
+  filter(fold.enrichment > 1.5, p.adjust < 1e-200) %>%
+  pull(motif.name) %>%
+  unique()
+
+# Step 2: For those motifs, keep all p.adjust values across all clusters
+combined_motifs_filtered <- combined_motifs %>%
+  filter(motif.name %in% motif_to_keep) %>%
+  mutate(neg_log10_padj = -log10(p.adjust))
+
+# Step 3: Pivot to wide format: motif.name × cluster
+motif_matrix <- combined_motifs_filtered %>%
+  select(motif.name, cluster, neg_log10_padj) %>%
+  pivot_wider(names_from = cluster, values_from = neg_log10_padj, values_fill = 0)
+
+# Step 4: Prepare matrix and fix rownames
+mat <- as.data.frame(motif_matrix)
+rownames(mat) <- mat$motif.name
+mat <- mat[, setdiff(colnames(mat), "motif.name")]
+
+# Step 5: Cap large values (e.g., >300)
+mat <- pmin(mat, 300)
+
+# Step 6: Define color scale
+breaks <- seq(10, 300, length.out = 100)
+
+# Step 7: Replace any NA with 0 (for safety)
+mat[is.na(mat)] <- 0
+
+colnames(mat) <- gsub("Cluster_", "", colnames(mat))
+
+# Step 8: Plot heatmap
+p <- pheatmap(
+  mat,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  color = colorRampPalette(c("white", "darkred"))(99),
+  breaks = breaks,
+  main = expression("-log"[10]~"(adjusted p-value), enriched motifs per cluster, filtered by fold.enrichment > 1.5, p.adjust < 1e-200"),
+  fontsize_row = 8,
+  fontsize_col = 10,
+  border_color = NA
+)
+
+# Step 9: Save high-resolution image
+save_highres_plot(p, "Figure1/Figure_2B_MotifEnrichment_Heatmap.png", format = "png", width = 16, height = 16)
+ 
+# 2B Complete 
+
+# 2C Start
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(ChIPseeker)
+txdb <- TxDb.Mmusculus.UCSC.mm10.knownGene
+
+ATAC <- readRDS("../ATAC_analysis_with_individual_peaks/ATAC_with_individual_peaks_annotated_filtered_motifs_added.RDS")
+
+# Create GRanges object and filter standard chromosomes
+atac_gr <- granges(ATAC)
+standard_chroms <- standardChromosomes(atac_gr)
+atac_gr <- atac_gr[seqnames(atac_gr) %in% standard_chroms]
+set.seed(123)
+peak <- resize(atac_gr, width = 1, fix = "center")
+
+# Peak annotation
+peakAnno <- annotatePeak(peak, TxDb = txdb)
+
+# Annotation pie chart
+p <- plotAnnoPie(peakAnno) 
+
+# Save base R pie chart
+png("Figure1/Figure_2C_peak_summits_annotation.png", width = 1600*5, height = 1600*5, res = 1200)
+plotAnnoPie(peakAnno)
+dev.off()
+
+# 2C Complete
+
+# 2D Start
+library(rtracklayer)
+# Load ATAC object
+ATAC <- readRDS("../ATAC_analysis_with_individual_peaks/ATAC_with_individual_peaks_annotated_filtered.RDS")
+
+# ---- Load local BED files into GRanges ----
+bed_dir <- "Data/cCREs_mousebrain_catlasv1/"  # update this to your BED folder
+bed_files <- list.files(bed_dir, pattern = "\\.bed$", full.names = TRUE)
+
+# Import all BEDs as GRanges
+gr_list <- lapply(bed_files, function(file) {
+  message("Importing: ", file)
+  import(file, format = "BED")
+})
+
+# Combine and remove exact duplicates
+combined_gr <- do.call(c, gr_list)
+combined_gr_unique <- unique(combined_gr)
+
+# ---- Prepare ATAC GRanges ----
+atac_gr <- granges(ATAC)
+standard_chroms <- standardChromosomes(atac_gr)
+atac_gr <- atac_gr[seqnames(atac_gr) %in% standard_chroms]
+
+# ---- Find overlaps ----
+overlaps <- findOverlaps(atac_gr, combined_gr_unique, ignore.strand = TRUE)
+overlapping_idx <- unique(queryHits(overlaps))
+
+# ---- Count ----
+total_peaks <- length(atac_gr)
+num_overlapping <- length(overlapping_idx)
+num_non_overlapping <- total_peaks - num_overlapping
+
+# ---- Plot ----
+df <- data.frame(
+  Category = c("Overlapping", "Not Overlapping"),
+  Count = c(num_overlapping, num_non_overlapping)
+)
+
+p <- ggplot(df, aes(x = Category, y = Count, fill = Category)) +
+  geom_bar(stat = "identity", width = 0.4, color = "black") +
+  scale_fill_manual(values = c("Overlapping" = "black", "Not Overlapping" = "gray90")) +
+  geom_text(
+    aes(label = format(Count, big.mark = ",")),
+    vjust = -0.3, size = 5, fontface = "bold"
+  ) +
+  theme_minimal(base_size = 16) +
+  labs(
+    title = "ATAC peaks overlapping with known mouse brain cCREs",
+    x = NULL,
+    y = "Number of Peaks"
+  ) +
+  theme(
+    axis.text.x = element_text(face = "bold", size = 14),
+    axis.title.y = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.position = "none"
+  ) +
+  ylim(0, max(df$Count) * 1.15)  # Add headroom for text
+# ---- Save figure ----
+save_highres_plot(p, "Figure1/Figure_2D_ATAC_cCREs_overlap.png", format = "png")
+ 
+# 2D Complete
+
+# 2E Start
+readRDS("../ATAC_analysis_with_individual_peaks/ATAC_with_individual_peaks_annotated_filtered_motifs_added.RDS") -> alldata
+
+granges(alldata[["peaks"]]) -> all_peaks 
+
+summits <- GRanges(
+  seqnames = seqnames(all_peaks),
+  ranges = IRanges(
+    start = start(all_peaks) + floor(width(all_peaks) / 2),
+    width = 1
+  )
+)
+
+# Keep only chromosomes starting with "chr"
+summits <- summits[grepl("^chr", seqnames(summits))]
+
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+txdb <- TxDb.Mmusculus.UCSC.mm10.knownGene
+genes <- genes(txdb)
+
+te_df <- read.delim("Data/mm10_RepeatMasker/mm10_RepeatMasker.tsv", header = TRUE)
+exclude_classes <- c("Low_complexity", "Satellite", "rRNA", "tRNA", "scRNA", "snRNA", 
+                     "RNA", "RC", "srpRNA", "DNA?", "LTR?", "LINE?", "RC?", "SINE?")
+te_df <- subset(te_df, !(repClass %in% exclude_classes))
+# Remove families with "?" in the name
+te_df <- te_df[!grepl("\\?", te_df$repFamily), ]
+
+te_bed <- GRanges(
+  seqnames = te_df$genoName,
+  ranges = IRanges(start = te_df$genoStart + 1, end = te_df$genoEnd),  # BED 0-based
+  strand = te_df$strand,
+  TE_name = te_df$repName,
+  TE_class = te_df$repClass,
+  TE_family = te_df$repFamily
+)
+
+
+hits_genes <- findOverlaps(summits, genes)
+hits_tes <- findOverlaps(summits, te_bed)
+
+# Assign overlap status
+summits$overlap <- "None"
+summits$overlap[queryHits(hits_genes)] <- "Gene"
+summits$overlap[queryHits(hits_tes)] <- ifelse(
+  summits$overlap[queryHits(hits_tes)] == "Gene", "Both", "TE")
+
+library(ChIPseeker)
+library(org.Mm.eg.db)
+peak_anno <- annotatePeak(summits, TxDb = txdb)
+
+# Add region annotation
+summits$gene_region <- peak_anno@anno$annotation
+
+te_hits <- findOverlaps(summits, te_bed)
+summits$TE_class <- NA
+summits$TE_family <- NA
+summits$TE_name <- NA
+
+summits$TE_class[queryHits(te_hits)] <- mcols(te_bed)$TE_class[subjectHits(te_hits)]
+summits$TE_family[queryHits(te_hits)] <- mcols(te_bed)$TE_family[subjectHits(te_hits)]
+summits$TE_name[queryHits(te_hits)] <- mcols(te_bed)$TE_name[subjectHits(te_hits)]
+
+options(scipen = 999)
+
+# Reorder
+overlap_table <- table(summits$overlap)
+desired_order <- c("Gene", "TE", "Both", "None")
+overlap_table <- overlap_table[desired_order]
+
+# Convert table to dataframe for ggplot
+df_overlap <- as.data.frame(overlap_table)
+colnames(df_overlap) <- c("Category", "Count")
+
+# Define colors matching original
+color_map <- c(
+  "Gene" = "skyblue",
+  "TE" = "orange",
+  "Both" = "green",
+  "None" = "gray"
+)
+
+# Plot
+p <- ggplot(df_overlap, aes(x = Category, y = Count, fill = Category)) +
+  geom_bar(stat = "identity", width = 0.6, color = "black") +
+  scale_fill_manual(values = color_map) +
+  geom_text(aes(label = format(Count, big.mark = ",")), vjust = -0.4, size = 5, fontface = "bold") +
+  theme_minimal(base_size = 15) +
+  labs(
+    title = "Distribution of all peak summits overlapping with Gene and TE",
+    x = NULL,
+    y = "Number of Summits"
+  ) +
+  theme(
+    axis.text.x = element_text(face = "bold", size = 13),
+    axis.title.y = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    legend.position = "none",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  ylim(0, max(df_overlap$Count) * 1.12)  # Add headroom for text
+
+save_highres_plot(p, "Figure1/Figure_2E_ATAC_cCREs_summits_overlap_with_Gene_TE_Both_or_None.png", format = "png")
+
+# 2E Complete
+
+options(scipen = 0)
+
+# 2F Start
+
+library(dplyr)
+library(ggplot2)
+
+# Step 1: Subset summits with TE or Both
+te_peaks <- summits[summits$overlap %in% c("TE", "Both")]
+
+# Convert to data frame
+te_df <- as.data.frame(te_peaks)
+
+# Step 2: Count all TE_family × TE_class combinations
+te_counts <- te_df %>%
+  count(TE_class, TE_family, name = "Count") %>%
+  arrange(desc(Count))
+
+# Step 3: Barplot
+p <- ggplot(te_counts, aes(x = reorder(TE_family, Count), y = Count, fill = TE_class)) +
+  geom_bar(stat = "identity", color = "black") +
+  coord_flip() +
+  labs(
+    title = "Distribution of TE Families in ATAC Peak Summits",
+    x = "TE Family",
+    y = "Number of Overlapping Summits",
+    fill = "TE Class"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.y = element_text(face = "bold", size = 9),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    legend.title = element_text(face = "bold")
+  )
+
+# Display the plot
+save_highres_plot(p, "Figure1/Figure_2F_ATAC_cCREs_summits_overlap_TEs_Classes_and_Family.png", format = "png")
+
+
+# 2F Complete
+
+# S4A Start
+TE_family_df <- readRDS("Data/Mouse_TE_family_enrichment_from_tsv_1804.rds")
+# Load libraries
+library(ggplot2)
+library(dplyr)
+
+# Assuming your result is in TE_family_df with columns: TE_family, Pvalue, Zscore, FDR
+
+# Remove NA p-values or Z-scores if any
+TE_family_df <- TE_family_df %>%
+  filter(!is.na(Pvalue), !is.na(Zscore)) %>%
+  mutate(
+    log10p = -log10(Pvalue),
+    Significant = FDR < 0.05
+  )
+
+#Barplot with Z-score on X-axis
+top_fams <- TE_family_df %>%
+  arrange(desc(Zscore)) %>%
+  slice_head(n = 50)
+
+p <- ggplot(top_fams, aes(x = reorder(TE_family, Zscore), y = Zscore, fill = Zscore)) +
+  geom_bar(stat = "identity") +
+  scale_fill_gradient(low = "skyblue", high = "darkblue") +
+  coord_flip() +
+  labs(title = "Top 50 Enriched TE Families", x = "TE Family", y = "Z-score") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+save_highres_plot(p, "Figure1/Figure_S4A_Top_50_Enriched_TE_Families", format = "png")
+
+# S4B Start
+# --------- 2. Volcano Plot: Z-score vs -log10(p-value) ---------
+p <- ggplot(TE_family_df, aes(x = Zscore, y = log10p, color = Significant)) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("TRUE" = "firebrick", "FALSE" = "grey60")) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "red") +
+  labs(
+    title = "Volcano Plot of TE Family Enrichment",
+    x = "Z-score",
+    y = expression(-log[10]~"(p-value)")
+  ) +
+  theme_minimal()
+
+save_highres_plot(p, "Figure1/Figure_S4B_Volcano_Plot_of_TE_Family_Enrichment", format = "png")
+# S4B Complete 
+
+
+# 4A Start
+# Load required libraries
+# Load required libraries
+library(dplyr)
+library(tidyr)
+library(readr)
+library(UpSetR)
+
+# Load and filter significant DARs
+df <- read_csv("Data/EPO_vs_Placebo/DA_peaks_combined_11levels_EPO_vs_Placebo_filtered_annotated_for_genes_and_TEs.csv") %>%
+  filter(p_val_adj < 0.01)
+
+# Remove unwanted clusters from data
+df <- df %>%
+  filter(!cluster %in% c(
+    "Cluster_Ependymal cells",
+    "Cluster_Intermediate cells",
+    "Cluster_Neuroimmune cells",
+    "Cluster_Pericytes"
+  ))
+
+# Remove "Cluster_" prefix from cluster names
+df <- df %>%
+  mutate(cluster = gsub("^Cluster_", "", cluster))
+
+# Clean cell_order by removing excluded clusters
+cell_order <- setdiff(cell_order, c(
+  "Ependymal cells", "Intermediate cells", "Neuroimmune cells", "Pericytes"
+))
+
+
+# Filter the palette to match cell_order
+color_vector <- palette_umap[cell_order]
+
+# Create binary matrix of peaks vs clusters
+binary_matrix <- df %>%
+  select(peak, cluster) %>%
+  distinct() %>%
+  mutate(value = 1) %>%
+  pivot_wider(names_from = cluster, values_from = value, values_fill = 0)
+
+# Prepare UpSet input
+upset_input <- as.data.frame(binary_matrix[, rev(cell_order)])
+rownames(upset_input) <- binary_matrix$peak
+
+# Generate UpSet plot with colors
+png("Figure4/upset_DARs_plot.png", width = 2800*5, height = 1600*5, res = 1200)
+upset(
+  upset_input,
+  sets = cell_order,
+  order.by = "freq",
+  keep.order = TRUE,
+  mainbar.y.label = "Shared DARs",
+  sets.x.label = "DARs per Cluster",
+  show.numbers = "yes",
+  sets.bar.color = color_vector,       # <- apply custom colors
+  #text.scale = c(1.2, 1.2, 1.2, 1.2, 1.2, 1.2)
+)
+dev.off()
+# Generate UpSet plot with set size numbers shown
+p <- upset(
+  upset_input,
+  sets = cell_order,
+  order.by = "freq",
+  keep.order = TRUE,
+  mainbar.y.label = "Shared DARs",
+  sets.x.label = "DARs per Cluster",
+  show.numbers = "yes"  # <- show numbers both on top and left bars
+)
+
+
+
+ATAC <- readRDS("../ATAC_analysis_with_individual_peaks/ATAC_with_individual_peaks_annotated_filtered.RDS")
+RNA <- readRDS("../ATAC_analysis_with_combined_peaks/RNA_final_(without_A3_A5_B10_B12).RDS")
+DefaultAssay(ATAC) <- "RNA"
+ATAC@meta.data$orig.ident <- ATAC@meta.data$type
+ATAC@meta.data <- ATAC@meta.data %>%
+  mutate(
+    condition = case_when(
+      startsWith(type, "A") ~ "EPO",
+      startsWith(type, "B") ~ "Placebo",
+      TRUE ~ NA_character_
+    )
+  )
+
+head(ATAC@meta.data)
+Idents(ATAC) <- "condition"
+FindMarkers(ATAC, ident.1 = "EPO", ident.2 = "Placebo", test.use = "bimod") -> markers_for_ATAC
+Idents(RNA) <- "type"
+FindMarkers(RNA, ident.1 = "A_Samples", ident.2 = "B_Samples", test.use = "bimod") -> markers_for_RNA
+saveRDS(markers_for_ATAC, file = "Data/markers_for_ATAC.rds")
+saveRDS(markers_for_RNA, file = "Data/markers_for_RNA.rds")
+
+
+# Load libraries
+library(dplyr)
+library(ggplot2)
+
+# Step 1: Filter significant DARs and DEGs
+sig_atac <- markers_for_ATAC %>%
+  filter(p_val_adj < 1e-20) %>%
+  mutate(gene = rownames(.)) %>%
+  select(gene, log2FC_atac = avg_log2FC)
+
+sig_rna <- markers_for_RNA %>%
+  filter(p_val_adj < 1e-20) %>%
+  mutate(gene = rownames(.)) %>%
+  select(gene, log2FC_rna = avg_log2FC)
+
+# Step 2: Merge on gene
+merged <- inner_join(sig_rna, sig_atac, by = "gene")
+
+# Step 3: Compute correlation manually
+cor_val <- cor(merged$log2FC_rna, merged$log2FC_atac)
+p_val <- cor.test(merged$log2FC_rna, merged$log2FC_atac)$p.value
+label_text <- paste0("R = ", round(cor_val, 2), ", p = ", formatC(p_val, format = "e", digits = 1))
+
+# Step 4: Create final polished plot
+p <- ggplot(merged, aes(x = log2FC_rna, y = log2FC_atac)) +
+  geom_point(alpha = 0.7, size = 1.8, color = "#1F77B4") +
+  geom_smooth(method = "lm", se = FALSE, color = "black", linetype = "dashed", linewidth = 0.8) +
+  annotate("text",
+           x = min(merged$log2FC_rna, na.rm = TRUE),
+           y = max(merged$log2FC_atac, na.rm = TRUE),
+           label = label_text,
+           size = 4.5, hjust = 0, vjust = 1.1, fontface = "italic") +
+  labs(
+    title = "Correlation Between Chromatin Accessibility and Gene Expression",
+    subtitle = "Matched DARs and DEGs (adj. p < 1e-20)",
+    x = expression("RNA log"[2]~"Fold Change (EPO vs Placebo)"),
+    y = expression("ATAC log"[2]~"Fold Change (EPO vs Placebo)")
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", size = 13, hjust = 0.5),
+    plot.subtitle = element_text(size = 11, hjust = 0.5, margin = margin(b = 10)),
+    axis.title = element_text(face = "bold", size = 12),
+    axis.text = element_text(size = 10),
+    plot.margin = margin(12, 12, 12, 12),
+    panel.grid.major = element_line(color = "gray90"),
+    panel.grid.minor = element_blank()
+  )
+
+# Step 5: Display
+print(p)
+
+save_highres_plot(p, "Figure4/Correlation_DARs_DEGs")
+
+ 
+
+
+library(dplyr)
+library(ggplot2)
+
+# Step 1: Load and filter DARs near promoters
+da_peaks <- read.csv("Data/EPO_vs_Placebo/DA_peaks_combined_11levels_EPO_vs_Placebo_filtered_annotated_for_genes_and_TEs.csv")
+da_peaks <- da_peaks[da_peaks$overlapping_promoter == "TRUE", ]
+da_peaks <- da_peaks[da_peaks$p_val < 0.01, ]
+
+# Step 2: Annotate direction
+da_peaks <- da_peaks %>%
+  mutate(direction = ifelse(avg_log2FC > 0, "Up", "Down"))
+
+# Step 3: Summarize up/down counts by cluster
+direction_summary <- da_peaks %>%
+  group_by(cluster, direction) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  mutate(
+    n_signed = ifelse(direction == "Up", n, -n),
+    hjust_val = ifelse(direction == "Up", -0.2, 1.2)
+  )
+
+# Step 4: Clean cluster names and set full order
+direction_summary$cluster <- gsub("Cluster_", "", direction_summary$cluster)
+
+cell_order <- c(
+  "Pyramidal neurons", "Oligodendrocytes", "Astrocytes",
+  "Dentate gyrus neurons", "Interneurons", "Microglia", "Endothelial cells"
+ # "Intermediate cells", "Pericytes", "Ependymal cells", "Neuroimmune cells"
+)
+direction_summary$cluster <- factor(direction_summary$cluster, levels = rev(cell_order))
+
+direction_summary <- direction_summary %>%
+  filter(cluster %in% cell_order)
+
+# Step 5: Create final plot
+p <- ggplot(direction_summary, aes(x = cluster, y = n_signed, fill = direction)) +
+  geom_bar(stat = "identity", width = 0.65, color = "black") +
+  geom_hline(yintercept = 0, color = "black", linewidth = 0.5) +
+  geom_text(
+    aes(label = abs(n), hjust = hjust_val),
+    size = 4,
+    fontface = "bold"
+  ) +
+  scale_fill_manual(
+    values = c("Up" = "#1B9E77", "Down" = "#D95F02")
+  ) +
+  coord_flip() +
+  labs(
+    title = "EPO-Responsive Promoter Accessibility Across Hippocampal Lineages",
+    subtitle = "Upregulated (green) vs Downregulated (red) promoter DARs (FDR < 0.01)",
+    x = NULL,
+    y = "Number of Differential Peaks",
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 15),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.title.x = element_text(face = "bold"),
+    axis.text.y = element_text(face = "bold", size = 12),
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+print(p)
+
+save_highres_plot(p, filename = "Figure4/EPO_promoter_DARs_by_lineagee", width = 14, height = 4)
+
+ 
+
+
+
+library(dplyr)
+library(ggplot2)
+
+# Step 1: Load and filter DARs near promoters
+da_peaks <- read.csv("Data/EPO_vs_Placebo/DA_peaks_combined_11levels_EPO_vs_Placebo_filtered_annotated_for_genes_and_TEs.csv")
+da_peaks <- da_peaks[da_peaks$p_val < 0.01, ]
+
+# Step 2: Annotate direction
+da_peaks <- da_peaks %>%
+  mutate(direction = ifelse(avg_log2FC > 0, "Up", "Down"))
+
+# Step 3: Summarize up/down counts by cluster
+direction_summary <- da_peaks %>%
+  group_by(cluster, direction) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  mutate(
+    n_signed = ifelse(direction == "Up", n, -n),
+    hjust_val = ifelse(direction == "Up", -0.2, 1.2)
+  )
+
+# Step 4: Clean cluster names and set full order
+direction_summary$cluster <- gsub("Cluster_", "", direction_summary$cluster)
+
+cell_order <- c(
+  "Pyramidal neurons", "Oligodendrocytes", "Astrocytes",
+  "Dentate gyrus neurons", "Interneurons", "Microglia", "Endothelial cells"
+  # "Intermediate cells", "Pericytes", "Ependymal cells", "Neuroimmune cells"
+)
+direction_summary$cluster <- factor(direction_summary$cluster, levels = rev(cell_order))
+
+direction_summary <- direction_summary %>%
+  filter(cluster %in% cell_order)
+
+# Step 5: Create final plot
+p <- ggplot(direction_summary, aes(x = cluster, y = n_signed, fill = direction)) +
+  geom_bar(stat = "identity", width = 0.65, color = "black") +
+  geom_hline(yintercept = 0, color = "black", linewidth = 0.5) +
+  geom_text(
+    aes(label = abs(n), hjust = hjust_val),
+    size = 4,
+    fontface = "bold"
+  ) +
+  scale_fill_manual(
+    values = c("Up" = "#1B9E77", "Down" = "#D95F02")
+  ) +
+  coord_flip() +
+  labs(
+    title = "EPO-Responsive Promoter Accessibility Across Hippocampal Lineages",
+    subtitle = "Upregulated (green) vs Downregulated (red) DARs (FDR < 0.01)",
+    x = NULL,
+    y = "Number of Differential Peaks",
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 15),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.title.x = element_text(face = "bold"),
+    axis.text.y = element_text(face = "bold", size = 11),
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+print(p)
+
+save_highres_plot(p, filename = "Figure4/EPO_DARs_by_lineage", width = 14, height = 4)
+
+library(dplyr)
+library(ggplot2)
+
+
+library(dplyr)
+library(ggplot2)
+
+library(dplyr)
+library(ggplot2)
+
+# Load and annotate all DARs
+all_dars <- read.csv("Data/EPO_vs_Placebo/DA_peaks_combined_11levels_EPO_vs_Placebo_filtered_annotated_for_genes_and_TEs.csv") %>%
+  filter(p_val < 0.01) %>%
+  mutate(
+    direction = ifelse(avg_log2FC > 0, "Up", "Down"),
+    group = "All DARs"
+  )
+
+# Annotate promoter subset
+promoter_dars <- all_dars %>%
+  filter(overlapping_promoter == "TRUE") %>%
+  mutate(group = "Promoter DARs")
+
+# Combine both
+combined <- bind_rows(all_dars, promoter_dars)
+
+# Clean and filter clusters
+combined$cluster <- gsub("Cluster_", "", combined$cluster)
+cell_order <- c(
+  "Pyramidal neurons", "Oligodendrocytes", "Astrocytes",
+  "Dentate gyrus neurons", "Interneurons", "Microglia", "Endothelial cells"
+)
+combined <- combined %>%
+  filter(cluster %in% cell_order) %>%
+  mutate(cluster = factor(cluster, levels = rev(cell_order)))
+
+# Summarize counts
+plot_data <- combined %>%
+  group_by(cluster, group, direction) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  mutate(
+    n_signed = ifelse(direction == "Up", n, -n),
+    hjust_val = ifelse(direction == "Up", -0.2, 1.2)
+  )
+
+# Create plot
+p <- ggplot(plot_data, aes(x = cluster, y = n_signed, fill = group)) +
+  geom_bar(stat = "identity", width = 0.6, position = position_dodge(width = 0.75), color = "black") +
+  geom_text(
+    aes(label = abs(n), hjust = hjust_val),
+    position = position_dodge(width = 0.75),
+    size = 3.8,
+    fontface = "bold"
+  ) +
+  facet_wrap(~ direction, nrow = 1) +  # shared scale across facets
+  coord_flip() +
+  scale_y_continuous(limits = c(-15000, 15000), expand = expansion(mult = c(0, 0.05))) +
+  scale_fill_manual(values = c("All DARs" = "#a6cee3", "Promoter DARs" = "#1f78b4")) +
+  labs(
+    title = "Total vs Promoter DARs Across Hippocampal Lineages (Up vs Down)",
+    subtitle = "Promoter DARs shown as subset of all DARs (FDR < 0.01)",
+    x = NULL,
+    y = "Number of Differential Peaks",
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 15),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.title.x = element_text(face = "bold"),
+    axis.text.y = element_text(face = "bold", size = 11),
+    legend.position = "top",
+    strip.text = element_text(face = "bold")
+  )
+
+# Save with sufficient width
+save_highres_plot(filename = "Figure4/EPO_DARs_promoter_within_all_fixed_scale", p, width = 16)
+
+# Print plot
+print(p)
+
+
+
+library(dplyr)
+library(ggplot2)
+
+# Load and annotate all DARs
+all_dars <- read.csv("Data/EPO_vs_Placebo/DA_peaks_combined_11levels_EPO_vs_Placebo_filtered_annotated_for_genes_and_TEs.csv") %>%
+  filter(p_val < 0.01) %>%
+  mutate(
+    direction = ifelse(avg_log2FC > 0, "Up", "Down"),
+    group = "Total DARs"
+  )
+
+# Promoter and TE subsets
+promoter_dars <- all_dars %>%
+  filter(overlapping_promoter == "TRUE") %>%
+  mutate(group = "Gene-TSS DARs")
+
+te_dars <- all_dars %>%
+  filter(overlapping_TE == "TRUE") %>%
+  mutate(group = "TE-derived DARs")
+
+# Exclude rows where TE_family contains '?'
+te_dars <- te_dars %>%
+  filter(!grepl("\\?", TE_family))
+
+# Combine all
+combined <- bind_rows(all_dars, te_dars, promoter_dars)
+
+# Clean cluster names
+combined$cluster <- gsub("Cluster_", "", combined$cluster)
+cell_order <- c(
+  "Pyramidal neurons", "Oligodendrocytes", "Astrocytes",
+  "Dentate gyrus neurons", "Interneurons", "Microglia", "Endothelial cells"
+)
+combined <- combined %>%
+  filter(cluster %in% cell_order) %>%
+  mutate(cluster = factor(cluster, levels = rev(cell_order)))
+
+# Summarize counts
+plot_data <- combined %>%
+  group_by(cluster, group, direction) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  mutate(
+    group = factor(group, levels = rev(c("Total DARs", "TE-derived DARs", "Gene-TSS DARs"))),
+    n_signed = ifelse(direction == "Up", n, -n),
+    hjust_val = ifelse(direction == "Up", -0.2, 1.2),
+    fill_group = group
+  )
+
+# Create plot
+p <- ggplot(plot_data, aes(x = cluster, y = n_signed, fill = fill_group)) +
+  geom_bar(stat = "identity", width = 0.6, position = position_dodge(width = 0.8), color = "black") +
+  geom_text(
+    aes(label = abs(n), hjust = hjust_val),
+    position = position_dodge(width = 0.8),
+    size = 3.5,
+    fontface = "bold"
+  ) +
+  coord_flip() +
+  scale_y_continuous(
+    limits = c(-15000, 15000),
+    breaks = seq(-15000, 15000, 5000),
+    expand = expansion(mult = c(0, 0.05))
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Total DARs" = "#a6cee3",
+      "TE-derived DARs" = "#b2df8a",
+      "Gene-TSS DARs" = "#1f78b4"
+    )
+  ) +
+  labs(
+    title = "Total, Promoter, and TE DARs Across Hippocampal Lineages (Up vs Down)",
+    subtitle = "Promoter and TE DARs shown as subsets of all DARs (FDR < 0.01)",
+    x = NULL,
+    y = "Number of Differential Peaks",
+    fill = NULL
+  ) +
+  guides(fill = guide_legend(nrow = 1, byrow = TRUE)) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 15),
+    plot.subtitle = element_text(hjust = 0.5, size = 15),
+    axis.title.x = element_text(face = "bold"),
+    axis.text.y = element_text(face = "bold", size = 15),
+    legend.position = "top",
+    strip.text = element_text(face = "bold")
+  )
+
+# Save high-res version
+save_highres_plot(filename = "Figure4/EPO_DARs_combined_final_group_ordered", p, width = 14)
+
+# Display
+print(p)
+
+
+
+# Load Seurat object
+alldata <- readRDS("../ATAC_analysis_with_individual_peaks/ATAC_with_individual_peaks_annotated_filtered.RDS")
+Idents(alldata) <- "transfered_predicted.id"
+
+# Set default assay
+DefaultAssay(alldata) <- "peaks"
+
+# Add condition based on metadata 'type'
+alldata@meta.data <- alldata@meta.data %>%
+  mutate(
+    condition = case_when(
+      startsWith(type, "A") ~ "EPO",
+      startsWith(type, "B") ~ "Placebo",
+      TRUE ~ NA_character_
+    )
+  )
+
+# Create combined cluster+condition identity
+alldata@meta.data$transfered_predicted.id_condition <- paste0(alldata$transfered_predicted.id, "_", alldata$condition)
+Idents(alldata) <- "transfered_predicted.id_condition"
+
+# Unique clusters
+clusters <- unique(alldata$transfered_predicted.id)
+
+
+da_peaks_per_cluster_list <- list()
+
+for (clust in clusters) {
+  message(sprintf("Processing cluster: %s", clust))
+  
+  epo_group <- paste0(clust, "_EPO")
+  placebo_group <- paste0(clust, "_Placebo")
+  
+  if (all(c(epo_group, placebo_group) %in% Idents(alldata))) {
+    n_epo <- sum(Idents(alldata) == epo_group)
+    n_placebo <- sum(Idents(alldata) == placebo_group)
+    
+    if (n_epo >= 3 && n_placebo >= 3) {
+      message("Running DA for cluster: ", clust)
+      
+      da_peaks <- FindMarkers(
+        object = alldata,
+        ident.1 = epo_group,
+        ident.2 = placebo_group,
+        only.pos = FALSE,
+        min.pct = 0.00,
+        logfc.threshold = 0.00,
+        test.use = "LR",
+        latent.vars = "nCount_peaks",
+        features = "chr9-48834629-48835429"
+      )
+      
+      if (nrow(da_peaks) > 0) {
+        da_peaks$comparison <- paste0(epo_group, "_vs_", placebo_group)
+        da_peaks_per_cluster_list[[clust]] <- da_peaks
+      } else {
+        message("No DA peaks found for cluster: ", clust)
+      }
+    } else {
+      message("Skipping cluster ", clust, ": not enough cells (EPO = ", n_epo, ", Placebo = ", n_placebo, ")")
+    }
+  } else {
+    message("Skipping cluster ", clust, ": missing group identities")
+  }
+}
+
+combined_da_peaks <- do.call(rbind, da_peaks_per_cluster_list)
+
+
+  
+library(dplyr)
+library(tidyr)
+library(pheatmap)
+
+# Load DARs and filter by significance and promoter overlap
+da_peaks <- read.csv("Data/EPO_vs_Placebo/DA_peaks_combined_11levels_EPO_vs_Placebo_filtered_annotated_for_genes_and_TEs.csv") %>%
+  filter(p_val_adj < 0.01)
+
+# Define cluster order
+cell_order <- c(
+  "Pyramidal neurons", "Oligodendrocytes", "Astrocytes",
+  "Dentate gyrus neurons", "Interneurons", "Microglia", "Endothelial cells"
+)
+
+# Group by peak and cluster
+peak_fc_per_cluster <- da_peaks %>%
+  mutate(cluster = gsub("Cluster_", "", cluster)) %>%
+  filter(cluster %in% cell_order) %>%
+  mutate(cluster = factor(cluster, levels = cell_order)) %>%
+  group_by(peak, cluster) %>%
+  summarise(mean_log2FC = mean(avg_log2FC), .groups = "drop") %>%
+  pivot_wider(names_from = cluster, values_from = mean_log2FC, values_fill = NA)
+
+
+# Load Seurat object
+alldata <- readRDS("../ATAC_analysis_with_individual_peaks/ATAC_with_individual_peaks_annotated_filtered.RDS")
+Idents(alldata) <- "transfered_predicted.id"
+
+# Set default assay
+DefaultAssay(alldata) <- "peaks"
+
+# Add condition based on metadata 'type'
+alldata@meta.data <- alldata@meta.data %>%
+  mutate(
+    condition = case_when(
+      startsWith(type, "A") ~ "EPO",
+      startsWith(type, "B") ~ "Placebo",
+      TRUE ~ NA_character_
+    )
+  )
+
+# Create combined cluster+condition identity
+alldata@meta.data$transfered_predicted.id_condition <- paste0(alldata$transfered_predicted.id, "_", alldata$condition)
+Idents(alldata) <- "transfered_predicted.id_condition"
+
+# Unique clusters
+clusters <- unique(alldata$transfered_predicted.id)
+
+
+da_peaks_per_cluster_list <- list()
+set.seed(0)
+for (clust in clusters) {
+  message(sprintf("Processing cluster: %s", clust))
+  
+  epo_group <- paste0(clust, "_EPO")
+  placebo_group <- paste0(clust, "_Placebo")
+  
+  if (all(c(epo_group, placebo_group) %in% Idents(alldata))) {
+    n_epo <- sum(Idents(alldata) == epo_group)
+    n_placebo <- sum(Idents(alldata) == placebo_group)
+    
+    if (n_epo >= 3 && n_placebo >= 3) {
+      message("Running DA for cluster: ", clust)
+      
+      da_peaks <- FindMarkers(
+        object = alldata,
+        ident.1 = epo_group,
+        ident.2 = placebo_group,
+        only.pos = FALSE,
+        min.pct = 0.00,
+        logfc.threshold = 0.00,
+        test.use = "LR",
+        latent.vars = "nCount_peaks",
+        features = (peak_fc_per_cluster$peak)
+      )
+      
+      if (nrow(da_peaks) > 0) {
+        da_peaks$comparison <- paste0(epo_group, "_vs_", placebo_group)
+        da_peaks_per_cluster_list[[clust]] <- da_peaks
+      } else {
+        message("No DA peaks found for cluster: ", clust)
+      }
+    } else {
+      message("Skipping cluster ", clust, ": not enough cells (EPO = ", n_epo, ", Placebo = ", n_placebo, ")")
+    }
+  } else {
+    message("Skipping cluster ", clust, ": missing group identities")
+  }
+}
+
+saveRDS(da_peaks_per_cluster_list, file = "Figure4/da_peaks_per_cluster_list_min_pct_logfc_0.rds")
+
+library(dplyr)
+library(tidyr)
+library(pheatmap)
+
+# Cleanly combine DA peaks per cluster
+combined_da_peaks <- bind_rows(
+  lapply(names(da_peaks_per_cluster_list), function(clust) {
+    df <- da_peaks_per_cluster_list[[clust]]
+    df$peak <- rownames(df)
+    df$cluster <- clust
+    return(df)
+  })
+)
+
+# Summarize mean log2FC per peak × cluster
+combined_matrix_df <- combined_da_peaks %>%
+  select(peak, cluster, avg_log2FC) %>%
+  group_by(peak, cluster) %>%
+  summarise(mean_log2FC = mean(avg_log2FC), .groups = "drop") %>%
+  pivot_wider(names_from = cluster, values_from = mean_log2FC, values_fill = 0)
+
+# Convert to matrix safely
+combined_matrix_df <- as.data.frame(combined_matrix_df)
+rownames(combined_matrix_df) <- make.unique(combined_matrix_df$peak)
+cluster_columns <- setdiff(colnames(combined_matrix_df), "peak")
+mat <- as.matrix(combined_matrix_df[, cluster_columns])
+
+# Drop rows where all values are NA
+mat <- mat[rowSums(is.na(mat)) < ncol(mat), ]
+
+# Cap extreme log2FC values
+mat <- pmax(pmin(mat, 2), -2)
+
+# Optional: define consistent column order
+cell_order <- c(
+  "Pyramidal neurons", "Oligodendrocytes", "Astrocytes",
+  "Dentate gyrus neurons", "Interneurons", "Microglia", "Endothelial cells"
+)
+valid_cell_order <- intersect(cell_order, colnames(mat))
+mat <- mat[, valid_cell_order, drop = FALSE]
+
+
+# 1. Make annotation dataframe for columns
+annotation_col <- data.frame(Cluster = colnames(mat))
+rownames(annotation_col) <- colnames(mat)
+
+# 2. Filter palette to only colors used in current matrix
+palette_umap_filtered <- palette_umap[colnames(mat)]
+
+# 3. Define annotation_colors as a named list
+annotation_colors <- list(Cluster = palette_umap_filtered)
+
+p <- pheatmap(
+  mat,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  color = colorRampPalette(c("blue", "white", "red"))(100),
+  main = expression("DAR Accessibility (log"[2]*"FC) across Clusters"),
+  fontsize_row = 6,
+  fontsize_col = 10,
+  border_color = NA,
+  labels_row = NA,
+  annotation_col = annotation_col,
+  annotation_colors = annotation_colors
+)
+
+# Extract ordered column names from the heatmap object
+ordered_clusters <- colnames(mat)[p$tree_col$order]
+ 
+# Reorder annotation colors and labels accordingly
+annotation_col <- annotation_col[ordered_clusters, , drop = FALSE]
+annotation_colors <- list(
+  Cluster = palette_umap[ordered_clusters]
+)
+
+# Re-plot with updated annotation_col and color order
+p <- pheatmap(
+  mat,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  color = colorRampPalette(c("blue", "white", "red"))(100),
+  main = expression("DAR Accessibility (log"[2]*"FC) across Clusters"),
+  fontsize_row = 6,
+  fontsize_col = 10,
+  border_color = NA,
+  labels_row = NA,
+  annotation_col = annotation_col,
+  annotation_colors = annotation_colors
+)
+
+save_highres_plot(p, filename = "Figure4/pheatmap", height = 8)
+
+
+
+
+library(dplyr)
+library(ggplot2)
+
+# Define neurogenic genes
+neurogenic_genes <- c(
+  "Ascl1", "Neurog2", "Pax6", "Tbr1", "Nrg3",
+  "Zbtb16", "Zbtb18", "Fabp5", "Mdga2", "Dusp6"
+)
+
+# Filter and prepare table
+# Load DARs and filter by significance and promoter overlap
+da_peaks <- read.csv("Data/EPO_vs_Placebo/DA_peaks_combined_11levels_EPO_vs_Placebo_filtered_annotated_for_genes_and_TEs.csv") %>%
+  filter(p_val_adj < 0.01)
+
+# Filter and prepare table
+neurogenic_plot_data <- da_peaks %>%
+  filter(overlapping_promoter == "TRUE", gene_symbol %in% neurogenic_genes) %>%
+  mutate(cluster = gsub("Cluster_", "", cluster)) %>%
+  filter(cluster %in% cell_order) %>%
+  mutate(
+    gene_symbol = factor(gene_symbol, levels = rev(neurogenic_genes)),  # Y-axis order
+    cluster = factor(cluster, levels = cell_order)  # X-axis order
+  )
+
+
+## 1. Get unique peak-to-gene_symbol mapping
+peak_to_gene <- neurogenic_plot_data %>%
+  distinct(peak, gene_symbol)
+
+# 2. Ensure consistent types
+peak_to_gene <- peak_to_gene %>% mutate(peak = as.character(peak))
+combined_da_peaks <- combined_da_peaks %>% mutate(peak = as.character(peak))
+
+# 3. Join statistical info from combined_da_peaks (multiple rows per peak if multiple clusters)
+neurogenic_stats <- combined_da_peaks %>%
+  inner_join(peak_to_gene, by = "peak")
+
+# Filter to only keep relevant clusters
+neurogenic_stats <- neurogenic_stats %>%
+  filter(cluster %in% cell_order) %>%
+  mutate(cluster = factor(cluster, levels = cell_order))
+
+# Add column to mark significance
+neurogenic_stats <- neurogenic_stats %>%
+  mutate(sig_star = ifelse(p_val_adj < 0.05, "*", ""))
+
+# Set the cluster factor levels
+neurogenic_stats$cluster <- factor(neurogenic_stats$cluster, levels = ordered_clusters)
+
+# Plot heatmap with significance stars and ordered clusters
+p <- ggplot(neurogenic_stats, aes(x = cluster, y = gene_symbol, fill = avg_log2FC)) +
+  geom_tile(color = "black") +
+  geom_text(aes(label = sig_star), color = "black", size = 5, vjust = 0.5) +
+  scale_fill_gradient2(
+    low = "blue", mid = "white", high = "red", midpoint = 0,
+    name = expression(log[2]~"FC")
+  ) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "EPO-Induced Promoter Accessibility at Neurogenic Genes",
+    x = "Cluster",
+    y = "Neurogenic Gene"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, color = "black", size = 14),
+    axis.text.y = element_text(color = "black", size = 12),
+    axis.title.x = element_text(color = "black", size = 16),
+    axis.title.y = element_text(color = "black", size = 16),
+    plot.title = element_text(face = "bold", hjust = 0.5, color = "black", size = 18),
+    panel.grid = element_blank()
+  )
+
+save_highres_plot(
+  p,
+  filename = "Figure4/Figure_4D_Neurogenic_Markers_EPO_vs_Placebo_as_table.png", height = 6,
+  format = "png"
+)
+
+ 
+ 
+
+
+
+library(dplyr)
+library(ggplot2)
+
+# Define neurogenic genes
+neurogenic_genes <- c(
+  "Ascl1", "Neurog2", "Pax6", "Tbr1", "Nrg3",
+  "Zbtb16", "Zbtb18", "Fabp5", "Mdga2", "Dusp6"
+)
+
+# Filter and prepare table
+neurogenic_plot_data <- da_peaks %>%
+  filter(overlapping_promoter == "TRUE", gene_symbol %in% neurogenic_genes) %>%
+  mutate(cluster = gsub("Cluster_", "", cluster)) %>%
+  filter(cluster %in% cell_order) %>%
+  mutate(
+    gene_symbol = factor(gene_symbol, levels = rev(neurogenic_genes)),  # Y-axis order
+    cluster = factor(cluster, levels = cell_order)  # X-axis order
+  )
+
+# Plot heatmap
+p <- ggplot(neurogenic_plot_data, aes(x = cluster, y = gene_symbol, fill = avg_log2FC)) +
+  geom_tile(color = "black") +
+  scale_fill_gradient2(
+    low = "blue", mid = "white", high = "red", midpoint = 0,
+    name = expression(log[2]~"FC")
+  ) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "EPO-Induced Promoter Accessibility at Neurogenic Genes",
+    x = "Cluster",
+    y = "Neurogenic Gene"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+
+save_highres_plot(
+  p,
+  filename = "Figure1/Figure_4D_Neurogenic_Markers_EPO_vs_Placebo_as_table.png",
+  format = "png"
+)
+
+
+
+
+
+
+ 
+
+DA_peaks_by_treatment <- read.csv("Data/EPO_vs_Placebo/DA_peaks_combined_11levels_EPO_vs_Placebo_filtered_annotated_for_genes_and_TEs.csv")
+DA_peaks_by_treatment <- DA_peaks_by_treatment[DA_peaks_by_treatment$p_val_adj<0.01,]
+dim(DA_peaks_by_treatment[DA_peaks_by_treatment$p_val_adj<0.01,])
+
+library(dplyr)
+library(tidyr)
+library(pheatmap)
+
+# Step 1: Load and filter
+df <- read.csv("Data/EPO_vs_Placebo/DA_peaks_combined_11levels_EPO_vs_Placebo_filtered_annotated_for_genes_and_TEs.csv")
+df <- df %>% filter(p_val_adj < 0.01)
+head(df)
+
+# Step 2: Pivot to wide format (rows = peak, columns = cluster, values = avg_log2FC)
+df_wide <- df %>%
+  select(peak, cluster, avg_log2FC) %>%
+  pivot_wider(names_from = cluster, values_from = avg_log2FC, values_fill = 0)
+
+# Step 3: Ensure unique rownames
+df_wide$peak <- as.character(df_wide$peak)
+rownames(df_wide) <- make.unique(df_wide$peak)
+mat <- as.matrix(df_wide[, -1])  # remove 'peak' column
+
+# Step 4: Cap extreme values
+mat <- pmax(pmin(mat, 4), -4)
+
+# Step 5: Plot heatmap
+p <- pheatmap(
+  mat,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  color = colorRampPalette(c("royalblue", "white", "red2"))(100),
+  main = expression("Differential Accessibility (EPO vs Placebo): log"[2]~"(Fold Change)"),
+  fontsize_row = 6,
+  fontsize_col = 10,
+  border_color = NA
+)
+
+save_highres_plot(p, "Figure1/Figure_4A_Differential Accessibility (EPO vs Placebo)", format = "png")
+
+# 4A Complete
+
+# 4B Start
+ATAC <- readRDS("../ATAC_analysis_with_individual_peaks/ATAC_with_individual_peaks_annotated_filtered.RDS")
+RNA <- readRDS("../ATAC_analysis_with_combined_peaks/RNA_final_(without_A3_A5_B10_B12).RDS")
+DefaultAssay(ATAC) <- "RNA"
+ATAC@meta.data$orig.ident <- ATAC@meta.data$type
+ATAC@meta.data <- ATAC@meta.data %>%
+  mutate(
+    condition = case_when(
+      startsWith(type, "A") ~ "EPO",
+      startsWith(type, "B") ~ "Placebo",
+      TRUE ~ NA_character_
+    )
+  )
+
+head(ATAC@meta.data)
+Idents(ATAC) <- "condition"
+FindMarkers(ATAC, ident.1 = "EPO", ident.2 = "Placebo", test.use = "bimod") -> markers_for_ATAC
+Idents(RNA) <- "type"
+FindMarkers(RNA, ident.1 = "A_Samples", ident.2 = "B_Samples", test.use = "bimod") -> markers_for_RNA
+saveRDS(markers_for_ATAC, file = "Data/markers_for_ATAC.rds")
+saveRDS(markers_for_RNA, file = "Data/markers_for_RNA.rds")
+
+library(dplyr)
+library(ggplot2)
+  
+# Step 1: Filter significant genes (adjusted p < 0.05)
+sig_atac <- markers_for_ATAC %>%
+  filter(p_val_adj < 1e-20) %>%
+  mutate(gene = rownames(.)) %>%
+  select(gene, log2FC_atac = avg_log2FC)
+
+sig_rna <- markers_for_RNA %>%
+  filter(p_val_adj < 1e-20) %>%
+  mutate(gene = rownames(.)) %>%
+  select(gene, log2FC_rna = avg_log2FC)
+
+# Step 2: Merge on common genes
+merged <- inner_join(sig_rna, sig_atac, by = "gene")
+
+# Step 3: Correlation plot
+p <- ggplot(merged, aes(x = log2FC_rna, y = log2FC_atac)) +
+  geom_point(alpha = 0.7, size = 2, color = "darkblue") +
+  geom_smooth(method = "lm", se = FALSE, color = "red", linetype = "dashed") +
+  labs(
+    title = "Correlation of Gene Expression and Chromatin Accessibility (Genes are filtered by p_val_adj < 1e-20)",
+    x = expression("RNA log"[2]~"Fold Change (EPO vs Placebo)"),
+    y = expression("ATAC log"[2]~"Fold Change (EPO vs Placebo)")
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.title = element_text(face = "bold")
+  ) +
+  stat_cor(method = "pearson", label.x = 0, label.y = max(merged$log2FC_atac, na.rm = TRUE))
+
+save_highres_plot(p, "Figure1/Figure_4B_Correlation_of_ATAC_RNA_differential_expression", format = "png")
+
+# 4B Complete
+
+# 4C Start
+da_peaks <- read.csv("Data/EPO_vs_Placebo/DA_peaks_combined_11levels_EPO_vs_Placebo_filtered_annotated_for_genes_and_TEs.csv")
+da_peaks <- da_peaks[da_peaks$overlapping_promoter=="TRUE",]
+da_peaks <- da_peaks[da_peaks$p_val < 0.01, ]
+ 
+# Step 1: Add direction and count
+da_peaks <- da_peaks %>%
+  mutate(direction = ifelse(avg_log2FC > 0, "Up", "Down"))
+
+direction_summary <- da_peaks %>%
+  group_by(cluster, direction) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  mutate(
+    n_signed = ifelse(direction == "Up", n, -n),
+    hjust_val = ifelse(direction == "Up", -0.1, 1.1)
+  )
+
+direction_summary$cluster <- gsub("Cluster_", "", direction_summary$cluster)
+direction_summary$cluster <- factor(direction_summary$cluster, levels = rev(cell_order))
+
+p <- ggplot(direction_summary, aes(x = cluster, y = n_signed, fill = direction)) +
+  geom_bar(stat = "identity", width = 0.6, color = "black") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_text(
+    aes(label = abs(n), hjust = hjust_val),
+    size = 4,
+    fontface = "bold"
+  ) +
+  scale_fill_manual(values = c("Up" = "darkgreen", "Down" = "firebrick")) +
+  coord_flip() +
+  labs(
+    title = "Up- and Down-Regulated Promoter Peaks by Cluster",
+    x = "Cluster",
+    y = "Number of Differential Peaks",
+    fill = "Direction"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.y = element_text(face = "bold")
+  )
+ 
+save_highres_plot(p, "Figure1/Figure_4C_Up-and_Down_Regulated_Promoter_Peaks_by_Cluster", format = "png", width = 15)
+
+
+da_peaks <- read.csv("Data/EPO_vs_Placebo/DA_peaks_combined_11levels_EPO_vs_Placebo_filtered_annotated_for_genes_and_TEs.csv")
+da_peaks <- da_peaks[da_peaks$p_val_adj < 0.01, ]
+
+# Step 1: Add direction and count
+da_peaks <- da_peaks %>%
+  mutate(direction = ifelse(avg_log2FC > 0, "Up", "Down"))
+
+direction_summary <- da_peaks %>%
+  group_by(cluster, direction) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  mutate(
+    n_signed = ifelse(direction == "Up", n, -n),
+    hjust_val = ifelse(direction == "Up", -0.1, 1.1)
+  )
+
+direction_summary$cluster <- gsub("Cluster_", "", direction_summary$cluster)
+direction_summary$cluster <- factor(direction_summary$cluster, levels = rev(cell_order))
+
+p <- ggplot(direction_summary, aes(x = cluster, y = n_signed, fill = direction)) +
+  geom_bar(stat = "identity", width = 0.6, color = "black") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_text(
+    aes(label = abs(n), hjust = hjust_val),
+    size = 4,
+    fontface = "bold"
+  ) +
+  scale_fill_manual(values = c("Up" = "darkgreen", "Down" = "firebrick")) +
+  coord_flip() +
+  labs(
+    title = "Up- and Down-Regulated Peaks by Cluster",
+    x = "Cluster",
+    y = "Number of Differential Peaks",
+    fill = "Direction"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.y = element_text(face = "bold")
+  )
+
+save_highres_plot(p, "Figure1/Figure_4C_Up-and_Down_Regulated_Peaks_by_Cluster", format = "png", width = 15)
+
+
+
+ 
+# 4C Complete
+
+# 4D Start
+ATAC <- readRDS("../ATAC_analysis_with_individual_peaks/ATAC_with_individual_peaks_annotated_filtered.RDS")
+ATAC@meta.data <- ATAC@meta.data %>%
+  mutate(
+    condition = case_when(
+      startsWith(type, "A") ~ "EPO",
+      startsWith(type, "B") ~ "Placebo",
+      TRUE ~ NA_character_
+    )
+  )
+
+CoveragePlot(ATAC, region = "Ascl1", annotation = TRUE, group.by = "condition", extend.upstream = 2000, extend.downstream = 2000)
+library(Signac)
+library(patchwork)
+
+# Expanded neurogenic gene set
+neurogenic_genes <- c(
+  "Ascl1", "Neurog2", "Pax6", "Tbr1", "Nrg3",
+  "Zbtb16", "Zbtb18", "Fabp5", "Mdga2", "Dusp6"
+)
+
+# Generate coverage plots per gene
+neurogenic_plots <- lapply(neurogenic_genes, function(gene) {
+  CoveragePlot(
+    object = ATAC,
+    region = gene,
+    annotation = TRUE,
+    group.by = "transfered_predicted.id",
+    split.by = "condition",
+    extend.upstream = 2000,
+    extend.downstream = 2000
+  ) + ggtitle(gene)
+})
+library(patchwork)
+
+# Combine vertically
+combined_plot <- wrap_plots(neurogenic_plots, ncol = 1)
+
+# Save high-res image
+save_highres_plot(
+  combined_plot,
+  filename = "Figure1/Figure_4D_Expanded_Neurogenic_Markers_EPO_vs_Placebo.png",
+  format = "png",
+  width = 10,
+  height = 40  # Adjust depending on how many genes shown
+)
+
+
+
+library(dplyr)
+library(ggplot2)
+
+# Define neurogenic genes
+neurogenic_genes <- c(
+  "Ascl1", "Neurog2", "Pax6", "Tbr1", "Nrg3",
+  "Zbtb16", "Zbtb18", "Fabp5", "Mdga2", "Dusp6"
+)
+
+# Filter and prepare table
+neurogenic_plot_data <- da_peaks %>%
+  filter(overlapping_promoter == "TRUE", gene_symbol %in% neurogenic_genes) %>%
+  mutate(cluster = gsub("Cluster_", "", cluster)) %>%
+  filter(cluster %in% cell_order) %>%
+  mutate(
+    gene_symbol = factor(gene_symbol, levels = rev(neurogenic_genes)),  # Y-axis order
+    cluster = factor(cluster, levels = cell_order)  # X-axis order
+  )
+
+# Plot heatmap
+p <- ggplot(neurogenic_plot_data, aes(x = cluster, y = gene_symbol, fill = avg_log2FC)) +
+  geom_tile(color = "black") +
+  scale_fill_gradient2(
+    low = "blue", mid = "white", high = "red", midpoint = 0,
+    name = expression(log[2]~"FC")
+  ) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "EPO-Induced Promoter Accessibility at Neurogenic Genes",
+    x = "Cluster",
+    y = "Neurogenic Gene"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+
+save_highres_plot(
+  p,
+  filename = "Figure1/Figure_4D_Neurogenic_Markers_EPO_vs_Placebo_as_table.png",
+  format = "png"
+)
+
+da_peaks <- read.csv("Data/EPO_vs_Placebo/DA_peaks_combined_11levels_EPO_vs_Placebo_filtered_annotated_for_genes_and_TEs.csv")
+da_peaks <- da_peaks[da_peaks$p_val_adj<0.01,]
+
+
+# Step 1: Filter and prepare
+gene_fc_per_cluster <- da_peaks %>%
+  filter(
+    overlapping_promoter == "TRUE",
+    !is.na(gene_symbol),
+    gene_symbol != ""
+  ) %>%
+  mutate(cluster = gsub("Cluster_", "", cluster)) %>%
+  filter(cluster %in% cell_order) %>%
+  mutate(cluster = factor(cluster, levels = cell_order)) %>%
+  group_by(gene_symbol, cluster) %>%
+  summarise(mean_log2FC = mean(avg_log2FC), .groups = "drop") %>%
+  pivot_wider(names_from = cluster, values_from = mean_log2FC, values_fill = 0)
+
+# Step 2: Convert to matrix and match order
+heatmap_df <- as.data.frame(gene_fc_per_cluster)
+rownames(heatmap_df) <- make.unique(heatmap_df$gene_symbol)
+
+valid_cell_order <- intersect(cell_order, colnames(heatmap_df))
+mat <- as.matrix(heatmap_df[, valid_cell_order])
+
+# Step 3: Cap values
+mat <- pmax(pmin(mat, 2), -2)
+
+# Step 4: Plot heatmap
+p <- pheatmap(
+  mat,
+  cluster_rows = TRUE,
+  cluster_cols = FALSE,
+  color = colorRampPalette(c("blue", "white", "red"))(100),
+  main = expression("Average Promoter Accessibility (log"[2]*"FC) by Cluster"),
+  fontsize_row = 6,
+  fontsize_col = 10,
+  border_color = NA, 
+  labels_row = NA
+)
+
+# Step 5: Save plot
+save_highres_plot(
+  p,
+  filename = "Figure1/Figure_4D_AllGene_log2FC_byCluster_heatmap_ordered.png",
+  format = "png"
+)
+ 
+# 4D Complete
+
+
+# 4E Start
+
+da_peaks <- read.csv("Data/EPO_vs_Placebo/DA_peaks_combined_11levels_EPO_vs_Placebo_filtered_annotated_for_genes_and_TEs.csv")
+da_peaks <- da_peaks[da_peaks$p_val_adj<0.01,]
+
+da_peaks_overlap_with_TE <- da_peaks[da_peaks$overlapping_TE == "TRUE",]
+
+
+# Summarize TE_family and TE_class distribution
+te_family_class_dist <- da_peaks_overlap_with_TE %>%
+  filter(!is.na(TE_family), !is.na(TE_class)) %>%
+  count(TE_family, TE_class, sort = TRUE)
+
+# Plot all families
+p <- ggplot(te_family_class_dist, aes(x = reorder(TE_family, n), y = n, fill = TE_class)) +
+  geom_bar(stat = "identity", color = "black") +
+  coord_flip() +
+  labs(
+    title = "TE Families Overlapping EPO-Responsive DARs",
+    x = "TE Family",
+    y = "Count",
+    fill = "TE Class"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.y = element_text(size = 8),
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "right"
+  )
+
+save_highres_plot(
+  p,
+  filename = "Figure1/Figure_4E_TE_Families_Overlapping_EPO-Responsive_DARs",
+  format = "png"
+)
+
+# 4E Complete 
+
+
+# 4F Start 
+
+da_peaks <- read.csv("Data/EPO_vs_Placebo/DA_peaks_combined_11levels_EPO_vs_Placebo_filtered_annotated_for_genes_and_TEs.csv")
+da_peaks <- da_peaks[da_peaks$p_val_adj<0.01,]
+
+da_peaks_overlap_with_TE <- da_peaks[da_peaks$overlapping_TE == "TRUE",]
+
+
+# Define classes to exclude
+exclude_classes <- c(
+  "Low_complexity", "Satellite", "rRNA", "tRNA", "scRNA", "snRNA", 
+  "RNA", "RC", "srpRNA", "DNA?", "LTR?", "LINE?", "RC?", "SINE?"
+)
+
+# Clean cluster names
+da_peaks_overlap_with_TE$cluster <- gsub("Cluster_", "", da_peaks_overlap_with_TE$cluster)
+
+# Filter TE_class and TE_family
+te_log2fc_matrix <- da_peaks_overlap_with_TE %>%
+  filter(
+    !is.na(TE_family),
+    !is.na(TE_class),
+    !TE_class %in% exclude_classes,
+    !grepl("\\?", TE_family)
+  ) %>%
+  group_by(TE_family, cluster) %>%
+  summarise(mean_log2FC = mean(avg_log2FC), .groups = "drop") %>%
+  pivot_wider(names_from = cluster, values_from = mean_log2FC, values_fill = 0)
+
+# Convert to matrix
+te_fc_df <- as.data.frame(te_log2fc_matrix)
+rownames(te_fc_df) <- make.unique(te_fc_df$TE_family)
+
+# Reorder columns by cell_order
+valid_order <- intersect(cell_order, colnames(te_fc_df))
+mat <- as.matrix(te_fc_df[, valid_order])
+
+# Cap values
+mat <- pmax(pmin(mat, 4), -4)
+
+# Plot heatmap
+p <- pheatmap(
+  mat,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  color = colorRampPalette(c("blue", "white", "red"))(100),
+  main = expression("Mean Accessibility (log"[2]*"FC) per TE Family"),
+  fontsize_row = 10,
+  fontsize_col = 10,
+  border_color = NA
+)
+
+
+# Optional: save
+save_highres_plot(
+  p,
+  filename = "Figure1/Figure_4F_TE_Family_Accessibility_Heatmap.png",
+  format = "png"
+)
+  
+# 4F Complete 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+library(regioneR)
+library(Signac)
+library(dplyr)
+library(GenomicRanges)
+library(BiocParallel)
+
+
+library(regioneR)
+library(GenomicRanges)
+library(BiocParallel)
+#register(MulticoreParam(workers = 12))  # adjust to your CPU count
+set.seed(0)
+
+# Load ATAC peaks
+library(dplyr)
+library(tidyr)
+library(pheatmap)
+
+# Load DARs and filter by significance and promoter overlap
+atac_df <- read.csv("Data/EPO_vs_Placebo/DA_peaks_combined_11levels_EPO_vs_Placebo_filtered_annotated_for_genes_and_TEs.csv") %>%
+  dplyr::filter(p_val_adj < 0.01)
+# Ensure peak column is in the format "chr:start-end"
+# Convert 'peak' column (e.g., "chr1:123456-123789") into GRanges
+peak_parts <- do.call(rbind, strsplit(atac_df$peak, "[:-]"))
+colnames(peak_parts) <- c("chr", "start", "end")
+
+# Create GRanges object
+atac_gr <- GRanges(
+  seqnames = peak_parts[, "chr"],
+  ranges = IRanges(start = as.numeric(peak_parts[, "start"]),
+                   end = as.numeric(peak_parts[, "end"]))
+)
+# remove duplicates
+atac_gr <- unique(atac_gr)
+
+standard_chroms <- standardChromosomes(atac_gr)
+atac_gr <- atac_gr[seqnames(atac_gr) %in% standard_chroms]
+peak <- resize(atac_gr, width = 1, fix = "center")
+
+# Load RepeatMasker with header
+te_df <- read.delim("Data/mm10_RepeatMasker/mm10_RepeatMasker.tsv", header = TRUE, stringsAsFactors = FALSE)
+
+# Exclude unwanted TE classes
+exclude_classes <- c("Low_complexity", "Satellite", "rRNA", "tRNA", "scRNA", "snRNA",
+                     "RNA", "RC", "srpRNA", "DNA?", "LTR?", "LINE?", "RC?", "SINE?")
+te_df <- subset(te_df, !(repClass %in% exclude_classes))
+
+# Keep only standard chromosomes (chr1–19, X, Y)
+te_df <- te_df[te_df$genoName %in% paste0("chr", c(1:19, "X", "Y")), ]
+
+# Convert to GRanges
+TEs <- GRanges(
+  seqnames = te_df$genoName,
+  ranges = IRanges(start = te_df$genoStart + 1, end = te_df$genoEnd),
+  strand = te_df$strand,
+  repName = te_df$repName,
+  repClass = te_df$repClass,
+  repFamily = te_df$repFamily
+)
+
+peaks_gr <- peak
+TEs_chr <- TEs
+
+# Unique TE names
+repNames <- unique(mcols(TEs)$repName)
+tf_df <- data.frame(
+  TE_name = repNames,
+  Pvalue = NA_real_,
+  Observed = NA_integer_,
+  Expected = NA_real_,
+  OE_ratio = NA_real_,
+  stringsAsFactors = FALSE
+)
+
+n_total <- length(repNames)
+set.seed(0)
+for (i in seq_along(repNames)) {
+  rn <- repNames[i]
+  
+  cat(sprintf("Analyzing %s (%d of %d)\n", rn, i, n_total))  # progress message
+  fam_gr <- TEs_chr[mcols(TEs_chr)$repName == rn]
+  
+  pt <- permTest(
+    A = fam_gr,
+    B = peaks_gr,
+    ntimes = 10,
+    randomize.function = resampleRegions,
+    universe = TEs_chr,
+    evaluate.function = numOverlaps,
+    verbose = FALSE,
+    alternative = "greater",
+    force.parallel = TRUE  
+  )
+  
+  obs <- pt$numOverlaps$observed
+  exp <- mean(pt$numOverlaps$permuted)
+  
+  tf_df$Pvalue[i]   <- pt$numOverlaps$pval
+  tf_df$Observed[i] <- obs
+  tf_df$Expected[i] <- round(exp, 2)
+  tf_df$OE_ratio[i] <- ifelse(!is.na(exp) && exp > 0, round(obs / exp, 3), NA)
+}
+
+
+
+# Save final merged result
+write.table(tf_df, "Figure4/Combined_TE_enrichment_by_repName_for_DARs.txt", sep = "\t", quote = FALSE, row.names = FALSE)
+saveRDS(tf_df, "Figure4/Combined_TE_enrichment_by_repName_for_DARs.rds")
+
+cat("✅ Enrichment testing using repName (with O/E ratio) is complete.\n")
+
+
+library(dplyr)
+library(ggplot2)
+
+# Load and filter
+da_peaks <- read.csv("Data/EPO_vs_Placebo/DA_peaks_combined_11levels_EPO_vs_Placebo_filtered_annotated_for_genes_and_TEs.csv")
+da_peaks <- da_peaks[da_peaks$p_val_adj < 0.01, ]
+da_peaks_overlap_with_TE <- da_peaks[da_peaks$overlapping_TE == "TRUE", ]
+
+# Exclude low-confidence classes and ambiguous families
+exclude_classes <- c(
+  "Low_complexity", "Satellite", "rRNA", "tRNA", "scRNA", "snRNA",
+  "RNA", "RC", "srpRNA", "DNA?", "LTR?", "LINE?", "RC?", "SINE?"
+)
+
+
+da_peaks_overlap_with_TE <- da_peaks_overlap_with_TE %>%
+  filter(
+    !TE_class %in% exclude_classes,
+    !TE_family %in% exclude_classes,
+    !grepl("\\?", TE_family)
+  )
+
+# Define TE class color palette
+te_colors <- c(
+  "DNA"           = "#E41A1C",
+  "LINE"          = "#FF7F00",
+  "LTR"           = "#4DAF4A",
+  "SINE"          = "#377EB8",
+  "Simple_repeat" = "#984EA3",
+  "Other"         = "#A65628",
+  "Unknown"       = "#999999"
+)
+
+# Summarize TE families and their class
+te_family_class_dist <- da_peaks_overlap_with_TE %>%
+  filter(!is.na(TE_family), !is.na(TE_class)) %>%
+  count(TE_family, TE_class, sort = TRUE) # full distribution
+
+# Reorder TE_family by count
+te_family_class_dist <- te_family_class_dist %>%
+  mutate(TE_family = factor(TE_family, levels = rev(unique(TE_family))))
+
+# Total count per TE class (for legend)
+class_totals <- te_family_class_dist %>%
+  group_by(TE_class) %>%
+  summarise(total = sum(n), .groups = "drop") %>%
+  arrange(desc(total)) %>%
+  mutate(class_label = paste0(TE_class, " (", format(total, big.mark = ",", trim = TRUE), ")"))
+
+legend_labels <- setNames(class_totals$class_label, class_totals$TE_class)
+
+# Plot
+p <- ggplot(te_family_class_dist, aes(x = TE_family, y = n, fill = TE_class)) +
+  geom_bar(stat = "identity", color = "black", width = 0.7) +
+  geom_text(aes(label = n), hjust = -0.15, size = 4.0) +
+  coord_flip() +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  scale_fill_manual(
+    values = te_colors,
+    breaks = names(legend_labels),
+    labels = legend_labels
+  ) +
+  labs(
+    title = "Distribution of TE Families in Differential ATAC Peaks",
+    x = "TE Family",
+    y = "Number of Overlapping Summits",
+    fill = "TE Class"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.y = element_text(size = 12),
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+
+# Show plot
+p
+
+
+save_highres_plot(p, filename = "Figure4/TE Families in ATAC Peak Summits", width = 8)
+
+# Plot (vertical orientation)
+library(forcats)
+
+# Reorder TE_family by count (descending)
+te_family_class_dist <- te_family_class_dist %>%
+  mutate(TE_family = fct_reorder(TE_family, n, .desc = TRUE))
+
+# Vertical barplot
+p <- ggplot(te_family_class_dist, aes(x = TE_family, y = n, fill = TE_class)) +
+  geom_bar(stat = "identity", color = "black", width = 0.7) +
+  geom_text(aes(label = n), vjust = -0.5, size = 4.0) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  scale_fill_manual(
+    values = te_colors,
+    breaks = names(legend_labels),
+    labels = legend_labels
+  ) +
+  labs(
+    title = "Distribution of TE Families in Differential ATAC Peaks",
+    x = "TE Family",
+    y = "Number of Overlapping Summits",
+    fill = "TE Class"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x = element_text(size = 24, angle = 45, hjust = 1, face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size = 14)
+  )
+
+p
+
+ 
+save_highres_plot(p, filename = "Figure4/TE Families in ATAC Peak Summits_vertical", width = 25)
+
+library(dplyr)
+library(ggplot2)
+library(forcats)
+
+# Step 1: Map repName to repClass
+rep_info <- te_df %>%
+  distinct(repName, repClass)
+
+# Step 2: Merge with enrichment results
+plot_df <- tf_df %>%
+  left_join(rep_info, by = c("TE_name" = "repName")) %>%
+  mutate(
+    repClass = ifelse(is.na(repClass), "Unknown", repClass),
+    neg_log10_pval = ifelse(!is.na(Pvalue) & Pvalue > 0, -log10(Pvalue), 0),
+    OE_ratio = ifelse(is.na(OE_ratio), 0, OE_ratio)
+  )
+
+# Step 3: Define desired TE class order
+class_order <- c("SINE", "LTR", "LINE", "DNA", "Simple_repeat", "Other", "Unknown")
+plot_df$repClass <- factor(plot_df$repClass, levels = class_order)
+
+# Step 4: Define color palette in the correct order
+te_colors <- c(
+  "LTR"           = "#4DAF4A",
+  "SINE"          = "#377EB8",
+  "LINE"          = "#FF7F00",
+  "Simple_repeat" = "#984EA3",
+  "DNA"           = "#E41A1C",
+  "Other"         = "#A65628",
+  "Unknown"       = "#999999"
+)
+
+# Step 4: Select labeled TEs
+top_labels <- plot_df %>%
+  filter(Pvalue < 1e-10, OE_ratio > 15) %>%
+  slice_max(order_by = neg_log10_pval, n = 10)
+
+library(ggrepel)
+# Step 5: Plot
+p <- ggplot(plot_df, aes(x = OE_ratio, y = neg_log10_pval, color = repClass)) +
+  geom_point(alpha = 0.4, size = 1, shape = 16) + 
+  geom_text_repel(
+    data = top_labels,
+    aes(label = TE_name),
+    size = 2.8,
+    box.padding = 0.3,
+    point.padding = 0.2,
+    segment.size = 0.2,
+    max.overlaps = 100,
+    min.segment.length = 0
+  ) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "grey50") +
+  geom_hline(yintercept = 2.85, linetype = "dashed", color = "grey50") +
+  scale_x_log10(
+    limits = c(0.5, NA),
+    breaks = c(0.5, 1, 2, 5, 10, 20, 50, 100),
+    name = "Observed / Expected (log scale)"
+  ) +
+  scale_color_manual(values = te_colors, name = "TE Class") +
+  labs(
+    y = expression(-log[10](p-value)),
+    title = "Transposon Enrichment in Differential ATAC Peaks"
+  ) +
+  theme_classic(base_size = 16) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size = 14),
+    legend.key.height = unit(0.4, "cm"),
+    legend.key.width = unit(0.4, "cm"),
+    legend.key = element_rect(fill = NA),
+    
+  ) + guides(color = guide_legend(override.aes = list(size = 4, shape = 16, alpha = 1)))
+
+p
+
+save_highres_plot(p, filename = "Figure4/Transposon_enrichment_1", width = 12)
+
+
+# Define significance threshold
+signif_threshold <- 3.0
+
+# Filter significant TEs
+signif_counts_df <- plot_df %>%
+  filter(neg_log10_pval >= signif_threshold)
+
+# Identify TEs to label (OE ratio > 0)
+label_df <- signif_counts_df %>%
+  filter(OE_ratio > 0)
+
+# TE class order and colors
+class_order <- c("SINE", "LTR", "LINE", "DNA", "Simple_repeat", "Other", "Unknown")
+
+# Set factor levels for proper legend display
+signif_counts_df$repClass <- factor(signif_counts_df$repClass, levels = class_order)
+label_df$repClass <- factor(label_df$repClass, levels = class_order)
+
+# Plot
+p2 <- ggplot(signif_counts_df, aes(x = Expected, y = Observed, color = repClass)) +
+  # Faded background points
+  geom_point(color = "grey75", size = 1.2, alpha = 0.3, inherit.aes = FALSE,
+             aes(x = Expected, y = Observed)) +
+  # Highlighted points
+  geom_point(data = label_df, size = 2.2, alpha = 0.9) +
+  # Labels
+  geom_text_repel(
+    data = label_df,
+    aes(label = TE_name),
+    size = 2.8,
+    box.padding = 0.3,
+    point.padding = 0.25,
+    segment.size = 0.3,
+    max.overlaps = Inf,
+    min.segment.length = 0
+  ) +
+  # Scales
+  scale_x_log10() +
+  scale_y_log10() +
+  scale_color_manual(
+    values = te_colors,
+    name = "TE Class",
+    drop = FALSE  # <-- ensures all class_order levels show in the legend
+  ) +
+  labs(
+    title = "Observed vs Expected Counts for Significant Transposons",
+    x = "Expected Count (log10)",
+    y = "Observed Count (log10)"
+  ) +
+  theme_classic(base_size = 16) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size = 14)
+  )
+
+p2
+
+
+save_highres_plot(p2, filename = "Figure4/Transposon_enrichment_22", width = 12)
+
+
+# 2B Start 
+ATAC <- readRDS("../ATAC_analysis_with_individual_peaks/ATAC_with_individual_peaks_annotated_filtered_motifs_added.RDS")
+DefaultAssay(ATAC) <- "peaks"
+Idents(ATAC) <- "transfered_predicted.id"
+
+# Define region: Naip locus ±10kb
+chr <- "chr13"
+start_pos <- 100397770
+end_pos <- 100462864
+region <- GRanges(seqnames = chr, ranges = IRanges(start = start_pos, end = end_pos))
+genome <- "mm10"
+genome(ATAC) <- genome
+
+# -----------------------
+# Generate coverage plot
+# -----------------------
+cov_plot <- CoveragePlot(
+  object = ATAC,
+  region = region,
+  annotation = TRUE,  # We'll add annotation with Gviz
+  peaks = TRUE,
+  links = FALSE,
+  extend.upstream = 1000,
+  extend.downstream = 1000
+)
+
+# -----------------------
+# Add RepeatMasker TE track
+# -----------------------
+# Replace with your path to mm10 RepeatMasker BED file
+repeats <- read.table("Data/mm10_RepeatMasker/mm10_RepeatMasker.bed", header = FALSE)
+colnames(repeats) <- c("chr", "start", "end", "name", "score", "strand")
+repeat_gr <- GRanges(
+  seqnames = repeats$chr,
+  ranges = IRanges(start = repeats$start, end = repeats$end),
+  strand = repeats$strand,
+  name = repeats$name
+)
+
+# Filter to the region
+repeat_region <- subsetByOverlaps(repeat_gr, region)
+
+# Gviz annotation track for TEs
+te_track <- AnnotationTrack(
+  repeat_region,
+  genome = genome,
+  name = "Transposons",
+  group = mcols(repeat_region)$name,
+  fill = "darkorange",
+  stacking = "dense"
+)
+
+# -----------------------
+# Add gene track from Biomart
+# -----------------------
+# Connect to Ensembl using archived version for mm10/GRCm38
+ensembl <- useEnsembl(
+  biomart = "ensembl",
+  dataset = "mmusculus_gene_ensembl",
+  version = 102  # corresponds to GRCm38/mm10, you can adjust if needed
+)
+
+# Create gene track using the specified biomart
+gene_track <- BiomartGeneRegionTrack(
+  genome = "mm10",
+  chromosome = "chr13",
+  start = 100397770,
+  end = 100462864,
+  name = "Genes",
+  transcriptAnnotation = "symbol",
+  biomart = ensembl
+)
+
+# -----------------------
+# Plot Gviz tracks
+# -----------------------
+gviz_tracks <- list(gene_track, te_track)
+gviz_plot <- plotTracks(
+  gviz_tracks,
+  from = start_pos,
+  to = end_pos,
+  chromosome = chr,
+  transcriptAnnotation = "symbol",
+  main = "Naip locus: Genes + All Transposons"
+)
+
+# -----------------------
+# Combine Signac signal + annotations
+# -----------------------
+# Use patchwork to align vertically
+final_plot <- cov_plot + patchwork::plot_spacer() + patchwork::wrap_elements(gviz_plot) +
+  plot_layout(ncol = 1, heights = c(2, 0.1, 1))
+
+# Show the final browser-style plot
+final_plot
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(ggalt)       # for dumbbell plot
+library(forcats)
+library(patchwork)   # to combine plots
+
+# Set consistent colors
+tf_colors <- c(
+  "EPO_Only" = "#D55E00",         # reddish
+  "Placebo_Only" = "#009E73",     # blue-green
+  "Shared" = "#999999"            # grey
+)
+
+# ---------------------------
+# A. Proportion Stacked Bar Plot
+# ---------------------------
+df_prop <- df_long %>%
+  group_by(CellType) %>%
+  mutate(prop = Count / sum(Count)) %>%
+  ungroup()
+
+p1 <- ggplot(df_prop, aes(x = fct_reorder(CellType, prop, .fun = sum), y = prop, fill = TF_Status)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = tf_colors) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Relative Proportion of TF Regulons by Condition",
+    x = "Cell Type",
+    y = "Proportion",
+    fill = "TF Status"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# ---------------------------
+# B. Dumbbell Plot: EPO-only vs Placebo-only
+# ---------------------------
+df_wide <- summary_df %>%
+  dplyr::select(CellType, EPO_Only, Placebo_Only)
+
+p2 <- ggplot(df_wide, aes(y = fct_reorder(CellType, EPO_Only - Placebo_Only))) +
+  geom_dumbbell(aes(x = Placebo_Only, xend = EPO_Only),
+                size = 3, color = "#cccccc",
+                colour_x = "#009E73", colour_xend = "#D55E00") +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Differential TF Regulon Activity",
+    x = "# of Unique TFs",
+    y = "Cell Type",
+    caption = "Green = Placebo-only | Red = EPO-only"
+  ) +
+  theme(panel.grid.major.x = element_line(color = "gray80"))
+
+# ---------------------------
+# Combine using patchwork
+# ---------------------------
+combined_plot <- p1 / p2 + plot_layout(heights = c(1, 1.1))
+combined_plot
+
+
+
+
+df <- read.csv("E:/Projects/ATAC-EPO/ATAC_analysis_with_combined_peaks/GRN/GRNs_by_condition/Regulon_presence_by_celltype_condition.csv")
+
+
+# For data manipulation
+library(dplyr)
+library(tidyr)
+
+# For plotting
+library(ggplot2)
+library(forcats)      # for fct_rev()
+library(ggalt)        # for geom_dumbbell()
+library(ggtext)       # for markdown caption
+library(patchwork)    # for combining plots
+
+
+
+# Define desired cell types and their display names
+selected_cells <- c(
+  "Pyramidal.neurons", 
+  "Oligodendrocytes", 
+  "Astrocytes", 
+  "Dentate.gyrus.neurons", 
+  "Interneurons", 
+  "Microglia", 
+  "Endothelial.cells"
+)
+display_names <- c(
+  "Pyramidal neurons", 
+  "Oligodendrocytes", 
+  "Astrocytes", 
+  "Dentate gyrus neurons", 
+  "Interneurons", 
+  "Microglia", 
+  "Endothelial cells"
+)
+cell_rename <- setNames(display_names, selected_cells)
+
+# Extract core cell type names
+celltypes <- unique(gsub("_.*", "", colnames(df)[-1]))
+
+# Summarize presence for each TF
+presence_list <- lapply(celltypes, function(ct) {
+  df %>%
+    dplyr::select(TF, matches(paste0("^", ct, "_"))) %>%
+    rename(EPO = 2, Placebo = 3) %>%
+    mutate(
+      shared = EPO == 1 & Placebo == 1,
+      EPO_only = EPO == 1 & Placebo == 0,
+      Placebo_only = EPO == 0 & Placebo == 1
+    ) %>%
+    summarise(
+      CellType = ct,
+      Shared = sum(shared),
+      EPO_Only = sum(EPO_only),
+      Placebo_Only = sum(Placebo_only)
+    )
+})
+
+summary_df <- bind_rows(presence_list)
+
+# Filter and rename selected cell types
+summary_df <- summary_df %>%
+  filter(CellType %in% names(cell_rename)) %>%
+  mutate(CellType = factor(cell_rename[CellType], levels = display_names))
+
+# Reshape to long format for proportion plot
+df_long <- summary_df %>%
+  pivot_longer(cols = c("Shared", "EPO_Only", "Placebo_Only"),
+               names_to = "TF_Status", values_to = "Count") %>%
+  mutate(TF_Status = factor(TF_Status, levels = c("EPO_Only", "Placebo_Only", "Shared")))
+
+# Prepare proportion data
+df_prop <- df_long %>%
+  group_by(CellType) %>%
+  mutate(prop = Count / sum(Count)) %>%
+  ungroup()
+
+# Clean TF_Status labels (remove underscores)
+df_prop$TF_Status <- recode_factor(
+  df_prop$TF_Status,
+  "EPO_Only" = "EPO only",
+  "Placebo_Only" = "Placebo only",
+  "Shared" = "Shared"
+)
+
+# Update colors to match new labels
+tf_colors <- c(
+  "EPO only" = "#D55E00",
+  "Placebo only" = "#009E73",
+  "Shared" = "#999999"
+)
+
+# ---------------------------
+# Panel A: Proportion Bar Plot
+# ---------------------------
+p1 <- ggplot(df_prop, aes(x = CellType, y = prop, fill = TF_Status)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = tf_colors) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "A. Relative Proportion of TF Regulons by Condition",
+    x = NULL,
+    y = "Proportion",
+    fill = "TF Status"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "top",
+    text = element_text(color = "black")  # <-- this line ensures black text
+  )
+
+# ---------------------------
+# Panel B: Dumbbell Plot
+# ---------------------------
+df_wide <- summary_df %>%
+  dplyr::select(CellType, EPO_Only, Placebo_Only)
+
+library(ggtext)
+
+p2 <- ggplot(df_wide, aes(y = fct_rev(CellType))) +
+  geom_dumbbell(aes(x = Placebo_Only, xend = EPO_Only),
+                size = 3, color = "#cccccc",
+                colour_x = tf_colors["Placebo only"],
+                colour_xend = tf_colors["EPO only"]) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "",
+    x = "# of Differential TFs",
+    y = NULL,
+    caption = "<span style='color:#D55E00;'>Red = EPO-only</span> | <span style='color:#009E73;'>Green = Placebo-only</span>"
+  ) +
+  theme(
+    panel.grid.major.x = element_line(color = "gray80"),
+    axis.text.y = element_text(size = 12),
+    text = element_text(color = "black"),
+    plot.caption = ggtext::element_markdown(size = 11, hjust = 0)
+  )
+
+# ---------------------------
+# Combine Panels
+# ---------------------------
+combined_plot <- p1 / p2 + plot_layout(heights = c(1, 1.1))
+combined_plot
+
+save_highres_plot(combined_plot, filename = "Figure4/GRNs_EPO_vs_Placebo", width = 8)
+
+
+
+
+
+
+
+
+
+
+
+
+# Define selected cell types and their display names
+selected_cells <- c(
+  "Pyramidal.neurons", 
+  "Oligodendrocytes", 
+  "Astrocytes", 
+  "Dentate.gyrus.neurons", 
+  "Interneurons", 
+  "Microglia", 
+  "Endothelial.cells"
+)
+
+# Load data
+df <- read.csv("E:/Projects/ATAC-EPO/ATAC_analysis_with_combined_peaks/GRN/GRNs_by_condition/Regulon_presence_by_celltype_condition.csv")
+
+# Filter and reshape for selected cell types
+df_filtered <- df %>%
+  dplyr::select(TF, matches(paste0("^(", paste(selected_cells, collapse = "|"), ")_")))
+
+# Reshape to long format
+df_long <- df_filtered %>%
+  pivot_longer(-TF, names_to = "CellType_Condition", values_to = "Presence") %>%
+  separate(CellType_Condition, into = c("CellType", "Condition"), sep = "_") %>%
+  pivot_wider(names_from = Condition, values_from = Presence, values_fill = 0)
+
+# Identify TFs where EPO ≠ Placebo in at least one cell type
+diff_tfs <- df_long %>%
+  filter(EPO != Placebo) %>%
+  pull(TF) %>%
+  unique()
+
+# Print nicely
+cat("Differential TFs (present only in EPO or Placebo in at least one selected cell type):\n\n")
+cat(paste(diff_tfs, collapse = ", "), "\n")
+
+
+
+
+
+
+
+
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Load and define
+df <- read.csv("E:/Projects/ATAC-EPO/ATAC_analysis_with_combined_peaks/GRN/GRNs_by_condition/Regulon_presence_by_celltype_condition.csv")
+
+selected_cells <- c(
+  "Pyramidal.neurons", "Oligodendrocytes", "Astrocytes",
+  "Dentate.gyrus.neurons", "Interneurons", "Microglia", "Endothelial.cells"
+)
+
+display_names <- c(
+  "Pyramidal neurons", "Oligodendrocytes", "Astrocytes",
+  "Dentate gyrus neurons", "Interneurons", "Microglia", "Endothelial cells"
+)
+
+cell_rename <- setNames(display_names, selected_cells)
+
+# Filter and reshape
+df_filtered <- df %>%
+  dplyr::select(TF, matches(paste0("^(", paste(selected_cells, collapse = "|"), ")_")))
+
+df_long <- df_filtered %>%
+  pivot_longer(-TF, names_to = "CellType_Condition", values_to = "Presence") %>%
+  separate(CellType_Condition, into = c("CellType", "Condition"), sep = "_") %>%
+  filter(CellType %in% names(cell_rename)) %>%
+  mutate(
+    CellType = cell_rename[CellType],
+    CellType = factor(CellType, levels = display_names),
+    Condition = factor(Condition, levels = c("EPO", "Placebo"))
+  )
+
+# Differential TFs
+diff_tfs <- df_long %>%
+  pivot_wider(names_from = Condition, values_from = Presence, values_fill = 0) %>%
+  filter(EPO != Placebo) %>%
+  pull(TF) %>%
+  unique()
+
+# Fill missing combinations
+df_long <- df_long %>%
+  filter(TF %in% diff_tfs)
+
+df_long <- expand.grid(
+  TF = unique(df_long$TF),
+  CellType = display_names,
+  Condition = c("EPO", "Placebo"),
+  stringsAsFactors = FALSE
+) %>%
+  left_join(df_long, by = c("TF", "CellType", "Condition")) %>%
+  mutate(
+    Presence = ifelse(is.na(Presence), 0, Presence),
+    CellType = factor(CellType, levels = display_names),
+    Condition = factor(Condition, levels = c("EPO", "Placebo"))
+  )
+
+# ➕ Horizontal TF panels
+n_tfs <- length(unique(df_long$TF))
+df_long <- df_long %>%
+  arrange(TF) %>%
+  mutate(
+    TF_Panel = paste0("", ceiling(as.numeric(factor(TF)) / ceiling(n_tfs / 2))),
+    Panel_ID = paste(TF_Panel, Condition, sep = " ")
+  )
+
+df_long$TF <- factor(df_long$TF, levels = rev(sort(unique(df_long$TF))))
+
+# Final Plot: Side-by-Side Panels (EPO/Placebo in pairs)
+library(ggplot2)
+library(ggh4x)
+
+p <- ggplot(df_long, aes(x = CellType, y = TF, fill = factor(Presence))) +
+  geom_tile(color = "black", linewidth = 0.1) +
+  scale_fill_manual(values = c("0" = "white", "1" = "black")) +
+  facet_wrap2(~Panel_ID, nrow = 1, scales = "free_y", axes = "y") +
+  force_panelsizes(cols = c(1, 1, 1, 1)) +  # equal width panels
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, color = "black"),
+    axis.text.y = element_text(size = 8, color = "black"),
+    strip.placement = "outside",
+    strip.background = element_blank(),
+    panel.spacing = unit(0, "lines"),
+    panel.grid = element_blank(),
+    legend.position = "right",
+    text = element_text(color = "black")
+  ) +
+  labs(
+    title = "Binary Heatmap of Differential TFs",
+    x = "Cell Type",
+    y = "TF",
+    fill = "Presence"
+  )
+
+save_highres_plot(p, filename = "Figure4/Binary Heatmap of Differential TFs")
+
+
+
+
+
+
+
+
+
+
+# Load required libraries
+library(Signac)
+library(Seurat)
+library(EnsDb.Mmusculus.v79)
+library(GenomeInfoDb)
+library(ggplot2)
+library(dplyr)
+
+ 
+ATAC <- readRDS("../ATAC_analysis_with_individual_peaks/ATAC_with_individual_peaks_annotated_filtered_motifs_added.RDS")
+DefaultAssay(ATAC) <- "peaks"
+
+ATAC@meta.data$orig.ident <- ATAC@meta.data$type
+ATAC@meta.data <- ATAC@meta.data %>%
+  mutate(
+    condition = case_when(
+      startsWith(type, "A") ~ "EPO",
+      startsWith(type, "B") ~ "Placebo",
+      TRUE ~ NA_character_
+    )
+  )
+
+
+df <- read_csv("Data/EPO_vs_Placebo/DA_peaks_combined_11levels_EPO_vs_Placebo_filtered_annotated_for_genes_and_TEs.csv") %>%
+  filter(p_val_adj < 0.01)
+
+
+
+
+# Load libraries
+library(Gviz)
+library(GenomicRanges)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(org.Mm.eg.db)
+library(dplyr)
+library(tidyr)
+
+
+te_df <- read.delim("Data/mm10_RepeatMasker/mm10_RepeatMasker.tsv", header = TRUE)
+exclude_classes <- c("Low_complexity", "Satellite", "rRNA", "tRNA", "scRNA", "snRNA", 
+                     "RNA", "RC", "srpRNA", "DNA?", "LTR?", "LINE?", "RC?", "SINE?")
+te_df <- subset(te_df, !(repClass %in% exclude_classes))
+# Remove families with "?" in the name
+te_df <- te_df[!grepl("\\?", te_df$repFamily), ]
+
+te_bed <- GRanges(
+  seqnames = te_df$genoName,
+  ranges = IRanges(start = te_df$genoStart + 1, end = te_df$genoEnd),  # BED 0-based
+  strand = te_df$strand,
+  TE_name = te_df$repName,
+  TE_class = te_df$repClass,
+  TE_family = te_df$repFamily
+)
+
+# Set genome and output directory
+genome <- "mm10"
+dir.create("gviz_genome_browser", showWarnings = FALSE)
+
+# Remove strand direction from TEs
+strand(te_bed) <- "*"
+
+# Define gene model track
+gene_track <- GeneRegionTrack(
+  TxDb.Mmusculus.UCSC.mm10.knownGene,
+  genome = genome,
+  name = "Genes",
+  showId = TRUE,
+  transcriptAnnotation = "symbol",
+  background.title = "white",
+  col.title = "black",
+  fill = "darkgray",
+  col = "black"
+)
+
+# Define target DAR peaks
+target_peaks <- c(
+  "chr4-42921234-42922376", "chr16-32179069-32180195", "chr9-121663130-121665010",
+  "chr5-37279727-37282072", "chr4-141622906-141626280", "chr1-88509583-88510501",
+  "chr5-34105279-34106339", "chr2-136005969-136006986", "chr1-92955341-92956146",
+  "chr11-116149994-116150972"
+)
+
+# Filter DAR table
+df_target <- df_te %>%
+  unite("peak_str", chr:start:end, sep = "-", remove = FALSE) %>%
+  filter(peak_str %in% target_peaks)
+
+# Promoters: TSS -2kb/+200bp
+promoters_all <- promoters(
+  genes(TxDb.Mmusculus.UCSC.mm10.knownGene),
+  upstream = 2000,
+  downstream = 200
+)
+
+# Loop over each DAR region
+for (i in seq_len(nrow(df_target))) {
+  row <- df_target[i, ]
+  gene <- row$gene_symbol
+  chr <- row$chr
+  start <- as.numeric(row$start)
+  end <- as.numeric(row$end)
+  
+  peak_name <- paste0(chr, "-", start, "-", end)
+  peak_gr <- GRanges(seqnames = chr, ranges = IRanges(start = start, end = end))
+  region_start <- start - 2000
+  region_end <- end + 2000
+  region <- GRanges(seqnames = chr, ranges = IRanges(region_start, region_end))
+  
+  # Only proceed if peak overlaps promoter
+  overlapping_promoters <- subsetByOverlaps(promoters_all, peak_gr)
+  if (length(overlapping_promoters) == 0) next
+  
+  # TE annotation track
+  te_sub <- subsetByOverlaps(te_bed, region)
+  if (length(te_sub) > 0) {
+    mcols(te_sub)$group <- te_sub$TE_family
+    
+    te_track <- AnnotationTrack(
+      range = te_sub,
+      genome = genome,
+      chromosome = chr,
+      name = "TE Family",
+      stacking = "dense",
+      groupAnnotation = "group",
+      featureAnnotation = "group",
+      showFeatureId = TRUE,
+      fontcolor.feature = "black",
+      fontsize.feature = 7,
+      just.group = "above",           # ✅ FIXED: valid justification
+      rotation.group = 90,            # vertical text
+      fill = NULL,
+      col = NA
+    )
+  } else {
+    te_track <- AnnotationTrack(
+      GRanges(seqnames = chr, ranges = IRanges(1, 1)),
+      genome = genome,
+      chromosome = chr,
+      name = "TE Family"
+    )
+  }
+  
+  # DAR peak track
+  mcols(peak_gr)$group <- peak_name
+  peak_track <- AnnotationTrack(
+    range = peak_gr,
+    genome = genome,
+    chromosome = chr,
+    name = "DAR Peak",
+    fill = "dodgerblue",
+    col = "dodgerblue4",
+    stacking = "dense",
+    featureAnnotation = "group",
+    showFeatureId = TRUE,
+    fontcolor.feature = "white",
+    fontsize.feature = 9
+  )
+  
+  # Gene track for this chromosome
+  gene_track_chr <- gene_track
+  chromosome(gene_track_chr) <- chr
+  
+  # Output file names
+  png_file <- paste0("gviz_genome_browser/", gene, "_", chr, "_browser_view.png")
+  pdf_file <- paste0("gviz_genome_browser/", gene, "_", chr, "_browser_view.pdf")
+  
+  # PNG
+  png(png_file, width = 2000, height = 600, res = 200)
+  plotTracks(
+    list(gene_track_chr, peak_track, te_track),
+    from = region_start,
+    to = region_end,
+    transcriptAnnotation = "symbol",
+    main = paste0("Genomic View: ", gene, " (", chr, ")"),
+    background.title = "white",
+    fontcolor.title = "black",
+    col.axis = "black",
+    cex.main = 1.4,
+    fontsize = 12
+  )
+  dev.off()
+  
+}
+
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+# Extract Epo gene coordinates
+gene.coord <- genes(EnsDb.Mmusculus.v79)
+coord <- gene.coord[gene.coord$gene_name == "Oplah"]
+
+# Plot genome browser view of the Epo locus
+CoveragePlot(
+  object = ATAC,
+  region = "chr4-42921234-42922376",
+  annotation = TRUE,
+  extend.upstream = 1000,
+  extend.downstream = 1000,
+  peaks = TRUE,
+  links = FALSE,
+  split.by = "condition",
+  idents = "Pyramidal neurons",
+  group.by = "transfered_predicted.id"  # Change to your actual metadata column if different
+)
+
+ATAC@meta.data$transfered_predicted.id_condition <- paste0(ATAC@meta.data$transfered_predicted.id, "_", ATAC@meta.data$condition)
+Idents(ATAC) <- "transfered_predicted.id_condition"
+
+ 
+FindMarkers(
+  object = ATAC,
+  ident.1 = "Pyramidal neurons_EPO",
+  ident.2 = "Pyramidal neurons_Placebo",
+  only.pos = TRUE,
+  min.pct = 0.1,
+  test.use = "LR",
+  latent.vars = "nCount_peaks",
+  logfc.threshold = 0.3
+)
+ 
+
+
+
+
+
+
+ATAC_ind <- readRDS("../ATAC_analysis_with_individual_peaks/ATAC_with_individual_peaks_annotated_filtered.RDS")
+
+
+ATAC <- readRDS("../ATAC_analysis_with_combined_peaks/ATAC_with_sharedUMAP_and_imputedRNA.rds")
+DefaultAssay(ATAC) <- "peaks"
+DARs <- read_csv("Data/EPO_vs_Placebo/DA_peaks_combined_11levels_EPO_vs_Placebo_filtered_annotated_for_genes_and_TEs.csv") %>%
+  dplyr::filter(p_val_adj < 0.01)
+
+DARs_up <- DARs[DARs$avg_log2FC>0,]
+
+te_df <- read.delim("Data/mm10_RepeatMasker/mm10_RepeatMasker.tsv", header = TRUE)
+exclude_classes <- c("Low_complexity", "Satellite", "rRNA", "tRNA", "scRNA", "snRNA", 
+                     "RNA", "RC", "srpRNA", "DNA?", "LTR?", "LINE?", "RC?", "SINE?")
+te_df <- subset(te_df, !(repClass %in% exclude_classes))
+# Remove families with "?" in the name
+te_df <- te_df[!grepl("\\?", te_df$repFamily), ]
+
+library(GenomicRanges)
+library(tidyverse)
+# Step 1: Parse DARs_up peak column into chr/start/end
+dar_coords <- str_split_fixed(DARs_up$peak, "-", 3)
+DARs_up <- DARs_up %>%
+  mutate(
+    chr = dar_coords[, 1],
+    start = as.numeric(dar_coords[, 2]),
+    end = as.numeric(dar_coords[, 3])
+  )
+
+# Step 2: Create GRanges for DARs
+dar_gr <- GRanges(
+  seqnames = DARs_up$chr,
+  ranges = IRanges(start = DARs_up$start, end = DARs_up$end)
+)
+
+# Step 3: Create GRanges for TE data (from RepeatMasker)
+te_gr <- GRanges(
+  seqnames = te_df$genoName,
+  ranges = IRanges(start = te_df$genoStart + 1, end = te_df$genoEnd),  # +1 for 1-based start
+  strand = te_df$strand,
+  repName = te_df$repName,
+  repClass = te_df$repClass,
+  repFamily = te_df$repFamily
+)
+
+# Step 4: Find overlaps
+hits <- findOverlaps(dar_gr, te_gr)
+
+# Step 5: Filter DARs with overlap
+DARs_overlapping_TEs <- DARs_up[queryHits(hits), ]
+
+unique(DARs_overlapping_TEs$peak) -> unique_peaks
+
+library(GenomicRanges)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+
+# 1. Get ±1 kb promoter regions using transcripts(txdb)
+txdb <- TxDb.Mmusculus.UCSC.mm10.knownGene
+transcripts_gr <- transcripts(txdb)
+
+# Get TSS locations from transcripts
+tss_gr <- GRanges(
+  seqnames = seqnames(transcripts_gr),
+  ranges = IRanges(
+    start = ifelse(strand(transcripts_gr) == "+", start(transcripts_gr), end(transcripts_gr)),
+    width = 1
+  ),
+  strand = strand(transcripts_gr)
+)
+
+# Create ±1 kb promoter regions
+promoter_regions <- resize(tss_gr, width = 2001, fix = "center")
+
+# 2. Parse unique_peaks into GRanges
+peak_coords <- stringr::str_split_fixed(unique_peaks, "-", 3)
+peak_gr <- GRanges(
+  seqnames = peak_coords[, 1],
+  ranges = IRanges(start = as.numeric(peak_coords[, 2]),
+                   end = as.numeric(peak_coords[, 3])),
+  peak = unique_peaks
+)
+
+# 3. Find overlaps with promoter regions
+hits <- findOverlaps(peak_gr, promoter_regions)
+
+# 4. Get overlapping peaks
+overlapping_peaks_promoter <- mcols(peak_gr)$peak[queryHits(hits)]
+overlapping_peaks_promoter_unique <- unique(overlapping_peaks_promoter)
+
+sum(unique_peaks %in% rownames(ATAC))
+sum(overlapping_peaks_promoter_unique %in% rownames(ATAC))
+
+DefaultAssay(ATAC) <- "peaks"
+ATAC@meta.data <- ATAC@meta.data %>%
+  mutate(
+    condition = case_when(
+      startsWith(orig.ident, "A") ~ "EPO",
+      startsWith(orig.ident, "B") ~ "Placebo",
+      TRUE ~ NA_character_
+    )
+  )
+
+ATAC@meta.data$predicted.id_condition <- paste0(ATAC@meta.data$predicted.id, "_", ATAC@meta.data$condition)
+Idents(ATAC) <- "predicted.id_condition"
+
+
+# Get all unique predicted cell types
+celltypes <- unique(ATAC@meta.data$predicted.id)
+
+# Prepare list to hold results
+marker_results <- list()
+
+# Loop through each predicted cell type
+for (celltype in celltypes) {
+  group_1 <- paste0(celltype, "_EPO")
+  group_2 <- paste0(celltype, "_Placebo")
+  
+  if (group_1 %in% Idents(ATAC) & group_2 %in% Idents(ATAC)) {
+    message("🔍 Running FindMarkers for: ", celltype)
+    
+    res <- FindMarkers(
+      object = ATAC,
+      ident.1 = group_1,
+      ident.2 = group_2,
+      only.pos = TRUE,
+      min.pct = 0.1,
+      test.use = "LR",
+      latent.vars = "nCount_peaks",
+      logfc.threshold = 0.3,
+      features = overlapping_peaks_promoter_unique
+    )
+    
+    res$celltype <- celltype
+    
+    marker_results[[celltype]] <- res
+  } else {
+    message("⚠️ Skipping ", celltype, ": missing EPO or Placebo group.")
+  }
+}
+
+
+
+# Bind and tag with cell type
+marker_df_all <- bind_rows(marker_results, .id = "celltype_tested")
+
+# Preview
+head(marker_df_all)
+View(marker_df_all)
+marker_df_all_significant <- marker_df_all[marker_df_all$p_val_adj < 0.05,]
+head(marker_df_all_significant)
+marker_df_all_significant <- marker_df_all_significant[-10, ] #Making problem, I do not know why 
+marker_df_all_significant <- marker_df_all_significant[-17, ]
+marker_df_all_significant <- marker_df_all_significant[-28, ]
+
+# Loop over each significant marker
+for (i in seq_len(nrow(marker_df_all_significant))) {
+  
+  region_raw <- rownames(marker_df_all_significant)[i]
+  celltype <- marker_df_all_significant$celltype[i]
+  
+  # Clean region name (e.g., "chr3-116252796-116254038...1" → "chr3:116252796-116254038")
+  region_clean <- sub("\\.\\.\\..*$", "", region_raw)  # Remove trailing ...1, ...2
+  region <- region_clean
+  
+  message("📍 Plotting region: ", region, " | Celltype: ", celltype)
+  
+  p <- tryCatch({
+    suppressWarnings(
+      CoveragePlot(
+        object = ATAC,
+        region = region,
+        features = NULL,
+        extend.upstream = 1000,
+        extend.downstream = 1000,
+        group.by = "predicted.id",
+        split.by = "condition",
+        peaks = TRUE,
+        assay = "peaks",
+        idents = celltype
+      )
+    )
+  }, error = function(e) {
+    message("❌ Failed to plot region ", region, " (", celltype, "): ", e$message)
+    return(NULL)
+  })
+  
+  # Save if successful
+  if (!is.null(p)) {
+    # Create safe filename
+    file_tag <- gsub("[:-]", "_", region_clean)
+    file_tag <- paste0(gsub(" ", "_", celltype), "_", file_tag)
+    
+    save_highres_plot(
+      p,
+      filename = paste0("Figure4/CoveragePlots/", file_tag),
+      width = 10,
+      height = 5
+    )
+  }
+}
+
