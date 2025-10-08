@@ -1,0 +1,199 @@
+library(regioneR)
+library(Signac)
+library(GenomicRanges)
+library(BiocParallel)
+set.seed(0)
+
+# Register 32 workers (you can increase if you have more cores)
+register(MulticoreParam(workers = 32))  
+# Load ATAC peaks
+ATAC <- readRDS("ATAC_with_individual_peaks_annotated_filtered_motifs_added.RDS")
+atac_gr <- granges(ATAC)
+rm(ATAC)
+standard_chroms <- standardChromosomes(atac_gr)
+atac_gr <- atac_gr[seqnames(atac_gr) %in% standard_chroms]
+peak <- resize(atac_gr, width = 1, fix = "center")
+ 
+# Load RepeatMasker with header
+te_df <- read.delim("Data/mm10_RepeatMasker/mm10_RepeatMasker.tsv", header = TRUE, stringsAsFactors = FALSE)
+
+# Exclude unwanted TE classes
+exclude_classes <- c("Low_complexity", "Satellite", "rRNA", "tRNA", "scRNA", "snRNA",
+                     "RNA", "RC", "srpRNA", "DNA?", "LTR?", "LINE?", "RC?", "SINE?")
+te_df <- subset(te_df, !(repClass %in% exclude_classes))
+
+# Keep only standard chromosomes (chr1–19, X, Y)
+te_df <- te_df[te_df$genoName %in% paste0("chr", c(1:19, "X", "Y")), ]
+
+# Convert to GRanges
+TEs <- GRanges(
+  seqnames = te_df$genoName,
+  ranges = IRanges(start = te_df$genoStart + 1, end = te_df$genoEnd),
+  strand = te_df$strand,
+  repName = te_df$repName,
+  repClass = te_df$repClass,
+  repFamily = te_df$repFamily
+)
+
+peaks_gr <- peak
+TEs_chr <- TEs
+
+# Unique TE names
+repNames <- unique(mcols(TEs)$repName)
+tf_df <- data.frame(
+TE_name = repNames,
+Pvalue = NA_real_,
+Observed = NA_integer_,
+Expected = NA_real_,
+OE_ratio = NA_real_,
+stringsAsFactors = FALSE
+)
+
+# Unique TE names
+repNames <- unique(mcols(TEs)$repName)
+n_total <- length(repNames)
+
+# Create parallel loop
+results_list <- bplapply(seq_along(repNames), function(i) {
+  rn <- repNames[i]
+  cat(sprintf("Analyzing %s (%d of %d)\n", rn, i, n_total))
+
+  fam_gr <- TEs_chr[mcols(TEs_chr)$repName == rn]
+
+  pt <- permTest(
+    A = fam_gr,
+    B = peaks_gr,
+    ntimes = 1000,
+    randomize.function = resampleRegions,
+    universe = TEs_chr,
+    evaluate.function = numOverlaps,
+    verbose = FALSE,
+    alternative = "greater",
+    force.parallel = TRUE  # Still parallel within each permTest
+  )
+
+  obs <- pt$numOverlaps$observed
+  exp <- mean(pt$numOverlaps$permuted)
+
+  list(
+    TE_name = rn,
+    Pvalue = pt$numOverlaps$pval,
+    Observed = obs,
+    Expected = round(exp, 2),
+    OE_ratio = ifelse(!is.na(exp) && exp > 0, round(obs / exp, 3), NA)
+  )
+})
+
+# Combine results
+tf_df <- do.call(rbind, lapply(results_list, as.data.frame)) 
+
+# Save final merged result
+write.table(tf_df, "Figure2/Combined_TE_enrichment_by_repName.txt", sep = "\t", quote = FALSE, row.names = FALSE)
+saveRDS(tf_df, "Figure2/Combined_TE_enrichment_by_repName.rds")
+
+cat("Enrichment testing using repName (with O/E ratio) is complete.\n")
+ 
+
+
+
+library(regioneR)
+library(Signac)
+library(dplyr)
+library(GenomicRanges)
+library(BiocParallel)
+set.seed(0)
+
+# Register 32 workers (you can increase if you have more cores)
+register(MulticoreParam(workers = 32))  
+
+# Load DARs and filter by significance and promoter overlap
+atac_df <- read.csv("DA_peaks_combined_11levels_EPO_vs_Placebo_filtered_annotated_for_genes_and_TEs.csv") %>%
+  dplyr::filter(p_val_adj < 0.01)
+# Ensure peak column is in the format "chr:start-end"
+# Convert 'peak' column (e.g., "chr1:123456-123789") into GRanges
+peak_parts <- do.call(rbind, strsplit(atac_df$peak, "[:-]"))
+colnames(peak_parts) <- c("chr", "start", "end")
+
+# Create GRanges object
+atac_gr <- GRanges(
+  seqnames = peak_parts[, "chr"],
+  ranges = IRanges(start = as.numeric(peak_parts[, "start"]),
+                   end = as.numeric(peak_parts[, "end"]))
+)
+# remove duplicates
+atac_gr <- unique(atac_gr)
+
+standard_chroms <- standardChromosomes(atac_gr)
+atac_gr <- atac_gr[seqnames(atac_gr) %in% standard_chroms]
+peak <- resize(atac_gr, width = 1, fix = "center")
+
+# Load RepeatMasker with header
+te_df <- read.delim("Data/mm10_RepeatMasker/mm10_RepeatMasker.tsv", header = TRUE, stringsAsFactors = FALSE)
+
+# Exclude unwanted TE classes
+exclude_classes <- c("Low_complexity", "Satellite", "rRNA", "tRNA", "scRNA", "snRNA",
+                     "RNA", "RC", "srpRNA", "DNA?", "LTR?", "LINE?", "RC?", "SINE?")
+te_df <- subset(te_df, !(repClass %in% exclude_classes))
+
+# Keep only standard chromosomes (chr1–19, X, Y)
+te_df <- te_df[te_df$genoName %in% paste0("chr", c(1:19, "X", "Y")), ]
+
+# Convert to GRanges
+TEs <- GRanges(
+  seqnames = te_df$genoName,
+  ranges = IRanges(start = te_df$genoStart + 1, end = te_df$genoEnd),
+  strand = te_df$strand,
+  repName = te_df$repName,
+  repClass = te_df$repClass,
+  repFamily = te_df$repFamily
+)
+
+peaks_gr <- peak
+TEs_chr <- TEs
+
+# Unique TE names
+repNames <- unique(mcols(TEs)$repName)
+tf_df <- data.frame(
+  TE_name = repNames,
+  Pvalue = NA_real_,
+  Observed = NA_integer_,
+  Expected = NA_real_,
+  OE_ratio = NA_real_,
+  stringsAsFactors = FALSE
+)
+
+n_total <- length(repNames)
+set.seed(0)
+for (i in seq_along(repNames)) {
+  rn <- repNames[i]
+  
+  cat(sprintf("Analyzing %s (%d of %d)\n", rn, i, n_total))  # progress message
+  fam_gr <- TEs_chr[mcols(TEs_chr)$repName == rn]
+  
+  pt <- permTest(
+    A = fam_gr,
+    B = peaks_gr,
+    ntimes = 1000,
+    randomize.function = resampleRegions,
+    universe = TEs_chr,
+    evaluate.function = numOverlaps,
+    verbose = FALSE,
+    alternative = "greater",
+    force.parallel = TRUE  
+  )
+  
+  obs <- pt$numOverlaps$observed
+  exp <- mean(pt$numOverlaps$permuted)
+  
+  tf_df$Pvalue[i]   <- pt$numOverlaps$pval
+  tf_df$Observed[i] <- obs
+  tf_df$Expected[i] <- round(exp, 2)
+  tf_df$OE_ratio[i] <- ifelse(!is.na(exp) && exp > 0, round(obs / exp, 3), NA)
+}
+
+# Save final merged result
+write.table(tf_df, "Figure4/Combined_TE_enrichment_by_repName_for_DARs.txt", sep = "\t", quote = FALSE, row.names = FALSE)
+saveRDS(tf_df, "Figure4/Combined_TE_enrichment_by_repName_for_DARs.rds")
+
+cat("Enrichment testing using repName (with O/E ratio) is complete.\n")
+
