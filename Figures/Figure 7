@@ -1,0 +1,356 @@
+#!/bin/bash
+#SBATCH -p scc-gpu
+#SBATCH -N 1
+#SBATCH -n 64
+#SBATCH -t 2-0:00:00
+#SBATCH --mem=200G
+
+
+
+# === user settings === 
+THREADS=60
+BIN=10                      # bin size for bigWig 
+PREFIX=mm10                 # Bowtie2 index prefix
+MM10_URL="https://hgdownload.soe.ucsc.edu/goldenPath/mm10/bigZips/mm10.fa.gz"
+
+# === 0) conda env ===
+# If you don’t use conda, replace with your package manager equivalents.
+# 1. Make sure bioconda and conda-forge channels are enabled
+#conda config --add channels defaults
+#conda config --add channels bioconda
+#conda config --add channels conda-forge
+
+# 2. Create a new environment with all required tools
+ENVNAME=chipseq_env
+#conda create -y -n $ENVNAME \
+#    bowtie2 samtools deeptools pigz
+
+# 3. Activate the environment
+source activate $ENVNAME
+ 
+# === 1) genome download + index (Bowtie2) ===
+if [ ! -s "${PREFIX}.1.bt2" ] && [ ! -s "${PREFIX}.1.bt2l" ]; then
+  mkdir -p ref && cd ref
+  if [ ! -s mm10.fa ]; then
+    wget -O mm10.fa.gz "$MM10_URL"
+    pigz -dk mm10.fa.gz
+  fi
+  bowtie2-build --threads "$THREADS" mm10.fa "./${PREFIX}"
+  cd ..
+fi
+
+# === 2) file map (ChIP -> Input) ===
+# Uses your provided filenames exactly; edit if you rename files.
+declare -A CHIP
+declare -A INPUT
+
+CHIP[FOXG1]="SRR16975337_FOXG1.fastq.gz"
+INPUT[FOXG1]="SRR16975342_FOXG1_input.fastq.gz"
+
+CHIP[NEUROD1]="SRR16975340_NEUROD1.fastq.gz"
+INPUT[NEUROD1]="SRR16975342_NEUROD1_input.fastq.gz"
+
+CHIP[NeuroD2]="SRR1951391_NeuroD2.fastq.gz"
+INPUT[NeuroD2]="SRR1951392_NeuroD2_input.fastq.gz"
+
+CHIP[Neurog2]="SRR7133028_Neurog2.fastq.gz"
+INPUT[Neurog2]="SRR7133029_Neurog2_input.fastq.gz"
+
+# === 3) helper: align -> primary BAM (keep dups; drop secondary/supplementary) ===
+align_one () {
+  local fq="$1"
+  local base="$2"
+
+  echo "[INFO] fq: $fq"
+  echo "[INFO] base: $base"
+  echo "[INFO] output BAM: ${base}.primary.bam"
+
+  if [ ! -s "${base}.primary.bam" ]; then
+    echo "[RUN] bowtie2 -p $THREADS -x $PREFIX -U $fq"
+    bowtie2 -p "$THREADS" -x "ref/${PREFIX}" -U "$fq" 2> "${base}.bowtie2.log" \
+    | samtools view -@ "$THREADS" -b -F 2308 - 2>> "${base}.bowtie2.log" \
+    | samtools sort -@ "$THREADS" -o "${base}.primary.bam" - 2>> "${base}.bowtie2.log"
+
+    samtools index -@ "$THREADS" "${base}.primary.bam"
+
+    echo "[DONE] Created ${base}.primary.bam and index"
+    echo "[LOG]   See ${base}.bowtie2.log for details"
+  else
+    echo "[SKIP] ${base}.primary.bam already exists"
+  fi
+}
+
+# === 4) helper: BAM -> bigWig (CPM) ===
+bam_to_bw () {
+  local bam="$1" outbw="$2"
+  if [ ! -s "$outbw" ]; then
+    bamCoverage \
+      --bam "$bam" \
+      --outFileName "$outbw" \
+      --outFileFormat bigwig \
+      --normalizeUsing CPM \
+      --binSize "$BIN" \
+      --numberOfProcessors "$THREADS" \
+      --ignoreDuplicates
+      # NOTE: we remove exact duplicates (--ignoreDuplicates)
+      # NOTE: we rely on primary-only BAM from step 3
+  fi
+}
+
+# === 5) helper: ChIP vs Input (log2 ratio) ===
+# Uses log2( (ChIP + pseudocount) / (Input + pseudocount) )
+# NOTE: both inputs are CPM-normalized bigWigs with identical bin size.
+ratio_bw () {
+  local bw1="$1" bw2="$2" out="$3"
+  if [ ! -s "$out" ]; then
+    bigwigCompare \
+      --bigwig1 "$bw1" \
+      --bigwig2 "$bw2" \
+      --operation log2 \
+      --pseudocount 1 \
+      --binSize "$BIN" \
+      --skipNonCoveredRegions \
+      --outFileFormat bigwig \
+      --outFileName "$out" \
+      --numberOfProcessors "$THREADS"
+  fi
+}
+ 
+
+# === 6) run for all pairs ===
+for name in "${!CHIP[@]}"; do
+  chip_fq="${CHIP[$name]}"
+  inp_fq="${INPUT[$name]}"
+
+  for f in "$chip_fq" "$inp_fq"; do
+    if [ ! -s "$f" ]; then
+      echo "ERROR: Missing file $f" >&2
+      exit 1
+    fi
+  done
+
+  # align (primary only; keep duplicates)
+  align_one "$chip_fq" "${name}.ChIP"
+  align_one "$inp_fq"  "${name}.Input"
+
+  # bam -> bigWig (CPM); keep duplicates (do NOT set --ignoreDuplicates)
+  bam_to_bw "${name}.ChIP.primary.bam"  "${name}.ChIP.CPM.bw"
+  bam_to_bw "${name}.Input.primary.bam" "${name}.Input.CPM.bw"
+
+  # log2 ratio bigWig: ChIP vs Input
+  ratio_bw "${name}.ChIP.CPM.bw" "${name}.Input.CPM.bw" "${name}.ChIP_vs_Input.log2ratio.CPM.bw"
+done
+
+echo "Done. Log2-ratio tracks: *.ChIP_vs_Input.log2ratio.CPM.bw"
+
+
+
+ # ============================
+# (deepTools over repeats with matching TF summit overlap)
+# ============================
+BW_DIR="."                    
+REPEAT_BED="mm10_RepeatMasker.bed"
+SUMMIT_DIR="summit_files"
+
+# Repeat families to include
+FAMILIES=(
+  "L2b"
+  "L2"
+  "MIRb"
+  "MIR3"
+  "L2c"
+  "L3"
+  "L2a"
+  "MIRc"
+  "AmnSINE1"
+  "MER130"
+  "Tigger19a"
+  "MIR"
+  "MLT1J"
+  "MLT1K"
+  "MER5A"
+  "L3b"
+  "MER58A"
+  "MLT1H"
+  "UCON31"
+  "MamRep434"
+  "MamSINE1"
+  "LFSINE_Vert"
+  "MLT1G1"
+  "MER102b"
+)
+
+
+# 1) Collect bigWigs
+BWS=( ${BW_DIR}/*.log2ratio.CPM.bw )
+if [ ${#BWS[@]} -eq 0 ]; then
+  echo "[ERROR] No bigWig files (*.ChIP_vs_Input.log2ratio.CPM.bw) found in $BW_DIR"
+  exit 1
+fi
+echo "[INFO] Found ${#BWS[@]} bigWigs"
+
+mkdir -p families_bed
+
+# 2) For each bigWig, find its matching summit and process repeats
+for bw in "${BWS[@]}"; do
+  base=$(basename "$bw" .ChIP_vs_Input.log2ratio.CPM.bw)
+  summit="${SUMMIT_DIR}/${base}.bed"
+
+  if [ ! -s "$summit" ]; then
+    echo "[WARN] No summit file for $base"
+    continue
+  fi
+  echo "[INFO] Processing $base with summit $summit"
+
+  for fam in "${FAMILIES[@]}"; do
+    fam_bed="families_bed/${fam}.bed"
+    awk -v f="$fam" '$4==f {print $0}' "$REPEAT_BED" > "$fam_bed"
+
+    if [ ! -s "$fam_bed" ]; then
+      echo "[WARN] No regions found for $fam"
+      continue
+    fi
+  
+    # Split repeats into positive (overlap) and negative (no overlap)
+    pos_bed=families_bed/${fam}.${base}.positive.bed
+    neg_bed=families_bed/${fam}.${base}.negative.bed
+    bedtools intersect -u -a "$fam_bed" -b "$summit" > "$pos_bed"
+    bedtools intersect -v -a "$fam_bed" -b "$summit" > "$neg_bed"
+
+    echo "[INFO] $fam + $base: $(wc -l < "$pos_bed") positive, $(wc -l < "$neg_bed") negative repeats"
+
+    # ----------------------
+    # Positive set
+    # ----------------------
+    if [ -s "$pos_bed" ]; then
+      computeMatrix reference-point \
+        -S "$bw" \
+        -R "$pos_bed" \
+        --referencePoint center \
+        -b 2000 -a 2000 \
+        --binSize 10 \
+        --skipZeros --missingDataAsZero \
+        -p "$THREADS" \
+        -o ${fam}_${base}_positive.mat.gz \
+        --outFileNameMatrix ${fam}_${base}_positive.tab \
+        --outFileSortedRegions ${fam}_${base}_positive.regions.bed
+
+      plotHeatmap \
+        -m ${fam}_${base}_positive.mat.gz \
+        -out ${fam}_${base}_positive_heatmap.pdf \
+        --xAxisLabel "Distance from repeat center (bp)" \
+        --colorList white,whitesmoke,seashell,mistyrose,salmon,r \
+        --heatmapHeight 15 --heatmapWidth 6 \
+        --refPointLabel "Repeat center" \
+        --regionsLabel "" \
+        --dpi 1200 \
+        --boxAroundHeatmaps no \
+        --sortUsing mean \
+        --sortRegions descend \
+        --legendLocation upper-right \
+        --samplesLabel "${base}" \
+        --legendLocation best
+
+    fi
+
+    # ----------------------
+    # Negative set
+    # ----------------------
+    if [ -s "$neg_bed" ]; then
+      computeMatrix reference-point \
+        -S "$bw" \
+        -R "$neg_bed" \
+        --referencePoint center \
+        -b 2000 -a 2000 \
+        --binSize 10 \
+        --skipZeros --missingDataAsZero \
+        -p "$THREADS" \
+        -o ${fam}_${base}_negative.mat.gz \
+        --outFileNameMatrix ${fam}_${base}_negative.tab \
+        --outFileSortedRegions ${fam}_${base}_negative.regions.bed
+
+      plotHeatmap \
+        -m ${fam}_${base}_negative.mat.gz \
+        -out ${fam}_${base}_negative_heatmap.pdf \
+        --xAxisLabel "Distance from repeat center (bp)" \
+        --colorList white,whitesmoke,seashell,mistyrose,salmon,r \
+        --heatmapHeight 15 --heatmapWidth 6 \
+        --refPointLabel "Center" \
+        --regionsLabel "" \
+        --dpi 1200 \
+        --boxAroundHeatmaps no \
+        --sortUsing mean \
+        --sortRegions descend \
+        --legendLocation upper-right \
+        --samplesLabel "${base} - ${fam}" \
+        --legendLocation best
+
+    fi
+
+    # ----------------------
+    # Combined positive + negative in one figure
+    # ----------------------
+    if [ -s "$pos_bed" ] && [ -s "$neg_bed" ]; then
+      computeMatrix reference-point \
+        -S "$bw" \
+        -R "$pos_bed" "$neg_bed" \
+        --referencePoint center \
+        -b 2000 -a 2000 \
+        --binSize 10 \
+        --skipZeros --missingDataAsZero \
+        -p "$THREADS" \
+        -o ${fam}_${base}_posneg.mat.gz \
+        --outFileNameMatrix ${fam}_${base}_posneg.tab \
+        --outFileSortedRegions ${fam}_${base}_posneg.regions.bed
+
+      plotHeatmap \
+        -m ${fam}_${base}_posneg.mat.gz \
+        -out ${fam}_${base}_posneg_heatmap.pdf \
+        --xAxisLabel "Distance from repeat center (bp)" \
+        --colorList white,whitesmoke,seashell,mistyrose,salmon,r \
+        --heatmapHeight 15 --heatmapWidth 6 \
+        --refPointLabel "Center" \
+        --regionsLabel "Pos" "Neg" \
+        --dpi 1200 \
+        --boxAroundHeatmaps yes \
+        --sortUsing mean \
+        --sortRegions descend \
+        --legendLocation upper-right \
+        --samplesLabel "${base} - ${fam}" \
+        --legendLocation upper-left 
+    fi
+  done
+done
+
+echo "[DONE] Generated positive, negative, and combined plots for families: ${FAMILIES[*]}"
+
+
+for pdf in *.pdf; do
+    png="${pdf%.pdf}.png"
+    echo "[INFO] Converting $pdf -> $png"
+    magick convert -density 1200 -background white -alpha remove "$pdf" "$png"
+done
+
+echo "Completed"
+
+### R part: 
+library(tidyverse)
+
+# ---- read the raw lines ----
+lines <- read_lines("positive_negative_repeats.txt")
+
+# ---- parse with regex ----
+df <- tibble(raw = lines) %>%
+  extract(
+    raw,
+    into = c("family", "TF", "positive", "negative"),
+    regex = "^(\\S+) \\+ (\\S+): (\\d+) positive, (\\d+) negative repeats$",
+    convert = TRUE
+  )
+
+# ---- check result ----
+print(df, n = 20)
+
+# ---- save as TSV for later use ----
+write_tsv(df, "positive_negative_repeats.tsv")
+
