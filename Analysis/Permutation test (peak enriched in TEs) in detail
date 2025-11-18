@@ -181,7 +181,12 @@ for (i in seq_along(repNames)) {
     alternative = "greater",
     force.parallel = TRUE  
   )
-  
+
+
+  #TE_family_df_idx <- which(TE_family_df$repNames == rn) 
+  #tf_df$Pvalue[TE_family_df_idx] <- pt$numOverlaps$pval #pval calculation
+  #tf_df$Zscore[TE_family_df_idx] <- pt$numOverlaps$zscore #Zscore calculation
+
   obs <- pt$numOverlaps$observed
   exp <- mean(pt$numOverlaps$permuted)
   
